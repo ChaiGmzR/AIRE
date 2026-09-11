@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../widgets/top_header.dart';
@@ -15,35 +17,42 @@ class BoxingScreen extends StatefulWidget {
 class _BoxingScreenState extends State<BoxingScreen> {
   final TextEditingController boxIdController = TextEditingController();
   final TextEditingController barCodeController = TextEditingController();
-  final TextEditingController companyCodeController = TextEditingController(text: '92');
-  
+  final TextEditingController companyCodeController = TextEditingController(
+    text: '92',
+  );
+
   final FocusNode boxIdFocusNode = FocusNode();
   final FocusNode barCodeFocusNode = FocusNode();
-  
+
   bool boxIdLocked = false;
   bool scannerNormal = true;
   bool networkConnected = false;
   bool isProcessing = false;
-  
+  bool _suspendAutoFocus = false;
+  bool _focusScheduled = false;
+
   int currentBoxCount = 0;
   int shiftCount = 0;
   String? currentPartNumber;
-  
+  int? selectedRowIndex;
+
   List<BoxScan> boxScans = [];
 
   @override
   void initState() {
     super.initState();
+    boxIdFocusNode.addListener(_handleFocusChange);
+    barCodeFocusNode.addListener(_handleFocusChange);
     _checkApiConnection();
-    
+
     // Auto-focus on Box Id field on startup
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      boxIdFocusNode.requestFocus();
-    });
+    scheduleMicrotask(_scheduleExpectedFocus);
   }
 
   @override
   void dispose() {
+    boxIdFocusNode.removeListener(_handleFocusChange);
+    barCodeFocusNode.removeListener(_handleFocusChange);
     boxIdController.dispose();
     barCodeController.dispose();
     companyCodeController.dispose();
@@ -54,9 +63,42 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
   Future<void> _checkApiConnection() async {
     final status = await ApiService.getStatus();
+    if (!mounted) return;
     setState(() {
       networkConnected = status.connected;
     });
+    _scheduleExpectedFocus();
+  }
+
+  void _handleFocusChange() {
+    if (_suspendAutoFocus) {
+      return;
+    }
+
+    _scheduleExpectedFocus();
+  }
+
+  void _scheduleExpectedFocus() {
+    if (_focusScheduled) {
+      return;
+    }
+
+    _focusScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusScheduled = false;
+      _requestExpectedFocus();
+    });
+  }
+
+  void _requestExpectedFocus() {
+    if (!mounted || _suspendAutoFocus) {
+      return;
+    }
+
+    final expectedFocusNode = boxIdLocked ? barCodeFocusNode : boxIdFocusNode;
+    if (!expectedFocusNode.hasFocus && expectedFocusNode.canRequestFocus) {
+      expectedFocusNode.requestFocus();
+    }
   }
 
   void _onBoxIdSubmitted(String value) {
@@ -65,12 +107,18 @@ class _BoxingScreenState extends State<BoxingScreen> {
         boxIdLocked = true;
       });
       // Move focus to BarCode field
-      barCodeFocusNode.requestFocus();
+      _scheduleExpectedFocus();
+      return;
     }
+
+    _scheduleExpectedFocus();
   }
 
   Future<void> _onBarCodeSubmitted(String value) async {
-    if (value.trim().isEmpty || !boxIdLocked || isProcessing) return;
+    if (value.trim().isEmpty || !boxIdLocked || isProcessing) {
+      _scheduleExpectedFocus();
+      return;
+    }
 
     setState(() {
       isProcessing = true;
@@ -81,6 +129,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
         boxCode: boxIdController.text.trim(),
         barcode: value.trim(),
       );
+      if (!mounted) return;
 
       if (result.success) {
         // Add to local list
@@ -88,108 +137,107 @@ class _BoxingScreenState extends State<BoxingScreen> {
           currentBoxCount = result.boxCount ?? (currentBoxCount + 1);
           shiftCount = result.shiftCount ?? shiftCount;
           currentPartNumber = result.partNumber;
-          
-          boxScans.insert(0, BoxScan(
-            no: currentBoxCount,
-            boxId: boxIdController.text.trim(),
-            barCode: result.serial ?? value.trim(),
-            readTime: DateTime.now(),
-          ));
+          selectedRowIndex = null;
+
+          boxScans.insert(
+            0,
+            BoxScan(
+              no: currentBoxCount,
+              boxId: boxIdController.text.trim(),
+              barCode: result.serial ?? value.trim(),
+              readTime: DateTime.now(),
+            ),
+          );
         });
-        
+
         // Clear barcode field and keep focus
         barCodeController.clear();
       } else {
         _showError(result.error ?? 'Error registering scan');
+        barCodeController.clear();
       }
     } catch (e) {
       _showError('Connection error: $e');
     } finally {
-      setState(() {
-        isProcessing = false;
-      });
-      // Keep focus on barcode field for next scan
-      barCodeFocusNode.requestFocus();
+      if (mounted) {
+        setState(() {
+          isProcessing = false;
+        });
+        // Keep focus on barcode field for next scan
+        _scheduleExpectedFocus();
+      }
     }
   }
 
   Future<void> _onSend() async {
     if (!boxIdLocked || boxScans.isEmpty) {
       _showError('Please scan at least one piece before sending');
+      _scheduleExpectedFocus();
       return;
     }
 
-    // Show confirmation
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Send'),
-        content: Text('Send ${boxScans.length} pieces for box ${boxIdController.text}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Send'),
-          ),
-        ],
-      ),
-    );
+    setState(() {
+      isProcessing = true;
+    });
 
-    if (confirmed == true) {
-      setState(() {
-        isProcessing = true;
-      });
+    final result = await ApiService.sendBox(boxIdController.text.trim());
+    if (!mounted) return;
 
-      final result = await ApiService.sendBox(boxIdController.text.trim());
-      if (!mounted) return;
+    setState(() {
+      isProcessing = false;
+    });
 
-      setState(() {
-        isProcessing = false;
-      });
-
-      if (result.success) {
-        final fileName = result.fileName ?? 'BOX file';
-        _resetForm();
-        _showSuccess('Generated $fileName');
-      } else {
-        _showError(result.error ?? 'Error generating BOX file');
-        barCodeFocusNode.requestFocus();
-      }
+    if (result.success) {
+      final fileName = result.fileName ?? 'BOX file';
+      _resetForm();
+      _showSuccess('Generated $fileName');
+    } else {
+      _showError(result.error ?? 'Error generating BOX file');
+      _scheduleExpectedFocus();
     }
   }
 
   Future<void> _onClearScreen() async {
     if (boxScans.isEmpty && !boxIdLocked) {
       // Nothing to clear
-      boxIdFocusNode.requestFocus();
+      _scheduleExpectedFocus();
       return;
     }
 
     // Confirm clear if there are scans
     if (boxScans.isNotEmpty) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Clear Screen'),
-          content: Text('Clear ${boxScans.length} scanned pieces? This action cannot be undone.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
+      _suspendAutoFocus = true;
+      bool? confirmed;
+      try {
+        confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Clear Screen'),
+            content: Text(
+              'Clear ${boxScans.length} scanned pieces? This action cannot be undone.',
             ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Clear'),
-            ),
-          ],
-        ),
-      );
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Clear'),
+              ),
+            ],
+          ),
+        );
+      } finally {
+        _suspendAutoFocus = false;
+      }
 
-      if (confirmed != true) return;
+      if (!mounted) return;
+      if (confirmed != true) {
+        _scheduleExpectedFocus();
+        return;
+      }
 
       // Clear pending scans from backend memory
       if (boxIdController.text.isNotEmpty) {
@@ -208,13 +256,71 @@ class _BoxingScreenState extends State<BoxingScreen> {
       boxScans.clear();
       currentBoxCount = 0;
       currentPartNumber = null;
+      selectedRowIndex = null;
     });
-    boxIdFocusNode.requestFocus();
+    _scheduleExpectedFocus();
   }
 
-  void _onDeleteSelected() {
-    // Note: Individual delete not implemented as per original UI
-    // Pieces are committed as a batch
+  void _onRowSelected(int index) {
+    setState(() {
+      selectedRowIndex = selectedRowIndex == index ? null : index;
+    });
+    _scheduleExpectedFocus();
+  }
+
+  Future<void> _onDeleteSelected() async {
+    final index = selectedRowIndex;
+    if (index == null ||
+        index < 0 ||
+        index >= boxScans.length ||
+        isProcessing) {
+      _scheduleExpectedFocus();
+      return;
+    }
+
+    final scan = boxScans[index];
+    setState(() {
+      isProcessing = true;
+    });
+
+    final result = await ApiService.deleteBoxScan(
+      boxCode: scan.boxId,
+      barcode: scan.barCode,
+    );
+    if (!mounted) return;
+
+    if (result.success) {
+      setState(() {
+        boxScans.removeAt(index);
+        boxScans = _renumberLocalScans(boxScans);
+        selectedRowIndex = null;
+        currentBoxCount = result.boxCount ?? boxScans.length;
+        shiftCount = result.shiftCount ?? shiftCount;
+        currentPartNumber = boxScans.isEmpty
+            ? null
+            : result.partNumber ?? currentPartNumber;
+      });
+    } else {
+      _showError(result.error ?? 'Error deleting scan');
+    }
+
+    setState(() {
+      isProcessing = false;
+    });
+    _scheduleExpectedFocus();
+  }
+
+  List<BoxScan> _renumberLocalScans(List<BoxScan> scans) {
+    final total = scans.length;
+    return [
+      for (var index = 0; index < scans.length; index++)
+        BoxScan(
+          no: total - index,
+          boxId: scans[index].boxId,
+          barCode: scans[index].barCode,
+          readTime: scans[index].readTime,
+        ),
+    ];
   }
 
   void _showError(String message) {
@@ -244,7 +350,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
         children: [
           // Top Header with Ilsan Packing System
           const TopHeader(),
-          
+
           // Main content
           Expanded(
             child: Padding(
@@ -253,16 +359,27 @@ class _BoxingScreenState extends State<BoxingScreen> {
                 children: [
                   // Control Panel with scanner handling
                   _buildControlPanel(),
-                  
+
                   const SizedBox(height: 8),
-                  
-                  // Boxing List Table
+
                   Expanded(
-                    child: BoxingListTable(
-                      boxScans: boxScans,
-                      selectedRowIndex: null,
-                      onRowSelected: (_) {},
-                      onDeleteSelected: _onDeleteSelected,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          flex: 1,
+                          child: BoxingListTable(
+                            boxScans: boxScans,
+                            selectedRowIndex: selectedRowIndex,
+                            onRowSelected: _onRowSelected,
+                            onDeleteSelected: () {
+                              _onDeleteSelected();
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(flex: 2, child: _buildReservedWorkArea()),
+                      ],
                     ),
                   ),
                 ],
@@ -301,35 +418,56 @@ class _BoxingScreenState extends State<BoxingScreen> {
               ],
             ),
           ),
-          
+
           const SizedBox(width: 16),
-          
+
           // Middle - Buttons
           Column(
             children: [
               _buildActionButton('Send', const Color(0xFF9B59B6), _onSend),
               const SizedBox(height: 4),
-              _buildActionButton('Clear Screen', const Color(0xFF3498DB), _onClearScreen),
+              _buildActionButton(
+                'Clear Screen',
+                const Color(0xFF3498DB),
+                _onClearScreen,
+              ),
             ],
           ),
-          
+
           const SizedBox(width: 16),
-          
+
           // Status indicators
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildStatusIndicator('Scanner:', scannerNormal ? 'Normal' : 'Error', scannerNormal),
+              _buildStatusIndicator(
+                'Scanner:',
+                scannerNormal ? 'Normal' : 'Error',
+                scannerNormal,
+              ),
               const SizedBox(height: 4),
-              _buildStatusIndicator('Network:', networkConnected ? 'Connect' : 'Disconnect', networkConnected),
+              _buildStatusIndicator(
+                'Network:',
+                networkConnected ? 'Connect' : 'Disconnect',
+                networkConnected,
+              ),
             ],
           ),
-          
+
           const Spacer(),
-          
+
           // Right side - Counter and date
           _buildCounterDisplay(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildReservedWorkArea() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade400),
       ),
     );
   }
@@ -354,9 +492,14 @@ class _BoxingScreenState extends State<BoxingScreen> {
               style: const TextStyle(fontSize: 11),
               onSubmitted: _onBoxIdSubmitted,
               decoration: InputDecoration(
-                fillColor: boxIdLocked ? Colors.grey.shade300 : const Color(0xFFD8BFD8),
+                fillColor: boxIdLocked
+                    ? Colors.grey.shade300
+                    : const Color(0xFFD8BFD8),
                 filled: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 4,
+                  vertical: 4,
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.zero,
                   borderSide: BorderSide(color: Colors.grey.shade400),
@@ -403,7 +546,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
                 // Handle TAB key for scanner input
                 if (event is KeyDownEvent &&
                     (event.logicalKey == LogicalKeyboardKey.tab ||
-                     event.logicalKey == LogicalKeyboardKey.enter)) {
+                        event.logicalKey == LogicalKeyboardKey.enter)) {
                   if (barCodeController.text.isNotEmpty) {
                     _onBarCodeSubmitted(barCodeController.text);
                   }
@@ -416,9 +559,14 @@ class _BoxingScreenState extends State<BoxingScreen> {
                 style: const TextStyle(fontSize: 11),
                 onSubmitted: _onBarCodeSubmitted,
                 decoration: InputDecoration(
-                  fillColor: boxIdLocked ? const Color(0xFFFFFF99) : Colors.grey.shade200,
+                  fillColor: boxIdLocked
+                      ? const Color(0xFFFFFF99)
+                      : Colors.grey.shade200,
                   filled: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 4,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.zero,
                     borderSide: BorderSide(color: Colors.grey.shade400),
@@ -468,7 +616,10 @@ class _BoxingScreenState extends State<BoxingScreen> {
             decoration: InputDecoration(
               fillColor: const Color(0xFFFFFF99),
               filled: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 4,
+                vertical: 4,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.zero,
                 borderSide: BorderSide(color: Colors.grey.shade400),
@@ -490,10 +641,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
             border: Border.all(color: Colors.grey.shade400),
           ),
           alignment: Alignment.centerLeft,
-          child: const Text(
-            'ISEMM',
-            style: TextStyle(fontSize: 11),
-          ),
+          child: const Text('ISEMM', style: TextStyle(fontSize: 11)),
         ),
       ],
     );
@@ -501,8 +649,9 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
   Widget _buildCounterDisplay() {
     final now = DateTime.now();
-    final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} List';
-    
+    final dateStr =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} List';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -520,24 +669,15 @@ class _BoxingScreenState extends State<BoxingScreen> {
               ),
               const TextSpan(
                 text: '/',
-                style: TextStyle(
-                  fontSize: 36,
-                  color: Colors.black54,
-                ),
+                style: TextStyle(fontSize: 36, color: Colors.black54),
               ),
               TextSpan(
                 text: '$shiftCount',
-                style: const TextStyle(
-                  fontSize: 36,
-                  color: Colors.black54,
-                ),
+                style: const TextStyle(fontSize: 36, color: Colors.black54),
               ),
               const TextSpan(
                 text: ' items',
-                style: TextStyle(
-                  fontSize: 24,
-                  color: Colors.black54,
-                ),
+                style: TextStyle(fontSize: 24, color: Colors.black54),
               ),
             ],
           ),
@@ -545,20 +685,14 @@ class _BoxingScreenState extends State<BoxingScreen> {
         const SizedBox(height: 8),
         Text(
           dateStr,
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.grey.shade600,
-          ),
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
         ),
         if (currentPartNumber != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               'Part: $currentPartNumber',
-              style: TextStyle(
-                fontSize: 10,
-                color: Colors.grey.shade500,
-              ),
+              style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
             ),
           ),
       ],
@@ -575,9 +709,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
           backgroundColor: color,
           foregroundColor: Colors.white,
           padding: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(2),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(2)),
         ),
         child: Text(label, style: const TextStyle(fontSize: 11)),
       ),
@@ -607,7 +739,9 @@ class _BoxingScreenState extends State<BoxingScreen> {
             color: isGood ? Colors.blue : Colors.red,
             boxShadow: [
               BoxShadow(
-                color: (isGood ? Colors.blue : Colors.red).withValues(alpha: 0.5),
+                color: (isGood ? Colors.blue : Colors.red).withValues(
+                  alpha: 0.5,
+                ),
                 blurRadius: 4,
                 spreadRadius: 1,
               ),

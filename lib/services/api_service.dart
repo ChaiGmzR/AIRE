@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 class ApiService {
   static const String _defaultBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://192.168.1.10:3000',
+    defaultValue: 'http://192.168.1.10:3001',
   );
 
   static String _baseUrl = _defaultBaseUrl;
@@ -14,7 +14,7 @@ class ApiService {
     final configuredUrl = await _loadConfiguredBaseUrl(args);
     setBaseUrl(configuredUrl ?? _baseUrl);
   }
-  
+
   static void setPort(int port) {
     final currentUri = Uri.tryParse(_baseUrl);
     final host = currentUri?.host.isNotEmpty == true
@@ -31,7 +31,7 @@ class ApiService {
       _baseUrl = trimmed;
     }
   }
-  
+
   static String get baseUrl => _baseUrl;
 
   static Future<String?> _loadConfiguredBaseUrl(List<String> args) async {
@@ -55,7 +55,9 @@ class ApiService {
         final config = jsonDecode(await file.readAsString());
         if (config is Map<String, dynamic>) {
           final configuredUrl =
-              config['apiBaseUrl'] ?? config['baseUrl'] ?? config['api_base_url'];
+              config['apiBaseUrl'] ??
+              config['baseUrl'] ??
+              config['api_base_url'];
           if (configuredUrl is String && configuredUrl.trim().isNotEmpty) {
             return configuredUrl.trim();
           }
@@ -105,10 +107,7 @@ class ApiService {
       final response = await http.post(
         Uri.parse('$_baseUrl/api/scans'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'boxCode': boxCode,
-          'barcode': barcode,
-        }),
+        body: jsonEncode({'boxCode': boxCode, 'barcode': barcode}),
       );
 
       if (response.statusCode == 200) {
@@ -123,7 +122,10 @@ class ApiService {
         );
       } else {
         final error = jsonDecode(response.body);
-        return ScanResult(success: false, error: error['error'] ?? 'Unknown error');
+        return ScanResult(
+          success: false,
+          error: error['error'] ?? 'Unknown error',
+        );
       }
     } catch (e) {
       return ScanResult(success: false, error: 'Connection error: $e');
@@ -157,12 +159,16 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final scans = data['scans'] as List;
-        return scans.map((s) => BoxScanItem(
-          id: s['id'],
-          serial: s['serial'],
-          partNumber: s['partNumber'],
-          firstScan: s['firstScan'],
-        )).toList();
+        return scans
+            .map(
+              (s) => BoxScanItem(
+                id: s['id'],
+                serial: s['serial'],
+                partNumber: s['partNumber'],
+                firstScan: s['firstScan'],
+              ),
+            )
+            .toList();
       }
       return [];
     } catch (e) {
@@ -180,6 +186,39 @@ class ApiService {
       return response.statusCode == 200;
     } catch (e) {
       return false;
+    }
+  }
+
+  /// Delete one pending scan from a box
+  static Future<DeleteScanResult> deleteBoxScan({
+    required String boxCode,
+    required String barcode,
+  }) async {
+    try {
+      final encodedBoxCode = Uri.encodeComponent(boxCode);
+      final encodedBarcode = Uri.encodeComponent(barcode);
+      final response = await http.delete(
+        Uri.parse(
+          '$_baseUrl/api/scans/box/$encodedBoxCode/scan/$encodedBarcode',
+        ),
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return DeleteScanResult(
+          success: true,
+          boxCount: data['counts']?['box'],
+          shiftCount: data['counts']?['shift'],
+          partNumber: data['currentPartNumber'],
+        );
+      }
+
+      return DeleteScanResult(
+        success: false,
+        error: data['error'] ?? 'Unknown error',
+      );
+    } catch (e) {
+      return DeleteScanResult(success: false, error: 'Connection error: $e');
     }
   }
 
@@ -213,14 +252,12 @@ class ApiService {
   /// Get API status
   static Future<ApiStatus> getStatus() async {
     try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/api/scans/status'),
-      );
+      final response = await http.get(Uri.parse('$_baseUrl/api/scans/status'));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return ApiStatus(
-          connected: data['connected'] ?? false,
+          connected: true,
           shift: data['shift'] ?? '',
           serverTime: data['serverTime'] ?? '',
         );
@@ -234,9 +271,9 @@ class ApiService {
   /// Check if API is available
   static Future<bool> isAvailable() async {
     try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/health'),
-      ).timeout(const Duration(seconds: 5));
+      final response = await http
+          .get(Uri.parse('$_baseUrl/health'))
+          .timeout(const Duration(seconds: 5));
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -278,6 +315,22 @@ class BoxScanItem {
   });
 }
 
+class DeleteScanResult {
+  final bool success;
+  final int? boxCount;
+  final int? shiftCount;
+  final String? partNumber;
+  final String? error;
+
+  DeleteScanResult({
+    required this.success,
+    this.boxCount,
+    this.shiftCount,
+    this.partNumber,
+    this.error,
+  });
+}
+
 class SendBoxResult {
   final bool success;
   final String? fileName;
@@ -300,10 +353,5 @@ class ApiStatus {
   final String? serverTime;
   final String? error;
 
-  ApiStatus({
-    required this.connected,
-    this.shift,
-    this.serverTime,
-    this.error,
-  });
+  ApiStatus({required this.connected, this.shift, this.serverTime, this.error});
 }
