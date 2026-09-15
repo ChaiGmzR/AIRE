@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../app_info.dart';
 import '../widgets/top_header.dart';
 import '../widgets/boxing_list_table.dart';
 import '../models/box_scan.dart';
 import '../services/api_service.dart';
+import '../services/app_settings_service.dart';
 
 class BoxingScreen extends StatefulWidget {
   const BoxingScreen({super.key});
@@ -15,6 +17,17 @@ class BoxingScreen extends StatefulWidget {
 }
 
 class _BoxingScreenState extends State<BoxingScreen> {
+  static const String _mainPcbType = 'MAIN_PCB';
+  static const String _displayType = 'DISPLAY';
+  static const Map<String, String> _productionTypeLabels = {
+    _mainPcbType: 'MAIN PCB',
+    _displayType: 'DISPLAY',
+  };
+  static const Map<String, List<String>> _lineCodesByProductionType = {
+    _mainPcbType: ['M1', 'M2', 'M3', 'M4'],
+    _displayType: ['D1', 'D2', 'D3'],
+  };
+
   final TextEditingController boxIdController = TextEditingController();
   final TextEditingController barCodeController = TextEditingController();
   final TextEditingController companyCodeController = TextEditingController(
@@ -35,18 +48,28 @@ class _BoxingScreenState extends State<BoxingScreen> {
   int shiftCount = 0;
   String? currentPartNumber;
   int? selectedRowIndex;
+  String selectedProductionType = _mainPcbType;
+  String selectedLineCode = 'M1';
 
   List<BoxScan> boxScans = [];
+
+  List<String> get _availableLineCodes {
+    return _lineCodesByProductionType[selectedProductionType] ??
+        _lineCodesByProductionType[_mainPcbType]!;
+  }
 
   @override
   void initState() {
     super.initState();
     boxIdFocusNode.addListener(_handleFocusChange);
     barCodeFocusNode.addListener(_handleFocusChange);
+    unawaited(_loadSavedProductionSelection());
     _checkApiConnection();
 
-    // Auto-focus on Box Id field on startup
-    scheduleMicrotask(_scheduleExpectedFocus);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scheduleExpectedFocus();
+      unawaited(_validateAppVersion());
+    });
   }
 
   @override
@@ -66,6 +89,30 @@ class _BoxingScreenState extends State<BoxingScreen> {
     if (!mounted) return;
     setState(() {
       networkConnected = status.connected;
+    });
+    _scheduleExpectedFocus();
+  }
+
+  Future<void> _validateAppVersion() async {
+    final validation = await ApiService.validateVersion(
+      clientVersion: AppInfo.version,
+    );
+    if (!mounted || validation.valid) {
+      return;
+    }
+
+    _showError(validation.message);
+    _scheduleExpectedFocus();
+  }
+
+  Future<void> _loadSavedProductionSelection() async {
+    final settings = await AppSettingsService.loadProductionLineSettings();
+    if (!mounted || settings == null || boxIdLocked) {
+      return;
+    }
+
+    setState(() {
+      _setProductionSelection(settings.productionType, settings.lineCode);
     });
     _scheduleExpectedFocus();
   }
@@ -101,13 +148,33 @@ class _BoxingScreenState extends State<BoxingScreen> {
     }
   }
 
-  void _onBoxIdSubmitted(String value) {
-    if (value.trim().isNotEmpty) {
+  Future<void> _onBoxIdSubmitted(String value) async {
+    final boxId = value.trim();
+    if (boxId.isNotEmpty) {
+      boxIdController.value = TextEditingValue(
+        text: boxId,
+        selection: TextSelection.collapsed(offset: boxId.length),
+      );
+
       setState(() {
         boxIdLocked = true;
+        selectedRowIndex = null;
+        boxScans.clear();
+        currentBoxCount = 0;
+        currentPartNumber = null;
+        isProcessing = true;
       });
-      // Move focus to BarCode field
-      _scheduleExpectedFocus();
+
+      try {
+        await _clearCurrentBoxFromBackend();
+      } finally {
+        if (mounted) {
+          setState(() {
+            isProcessing = false;
+          });
+        }
+        _scheduleExpectedFocus();
+      }
       return;
     }
 
@@ -128,6 +195,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
       final result = await ApiService.registerScan(
         boxCode: boxIdController.text.trim(),
         barcode: value.trim(),
+        productionType: selectedProductionType,
+        lineCode: selectedLineCode,
       );
       if (!mounted) return;
 
@@ -153,11 +222,12 @@ class _BoxingScreenState extends State<BoxingScreen> {
         // Clear barcode field and keep focus
         barCodeController.clear();
       } else {
-        _showError(result.error ?? 'Error registering scan');
+        final error = result.error ?? 'Error al registrar el escaneo';
+        _showError(_displayErrorMessage(error));
         barCodeController.clear();
       }
     } catch (e) {
-      _showError('Connection error: $e');
+      _showError('Error de conexion: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -171,7 +241,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
   Future<void> _onSend() async {
     if (!boxIdLocked || boxScans.isEmpty) {
-      _showError('Please scan at least one piece before sending');
+      _showError('Escanee al menos una pieza antes de enviar');
       _scheduleExpectedFocus();
       return;
     }
@@ -188,11 +258,11 @@ class _BoxingScreenState extends State<BoxingScreen> {
     });
 
     if (result.success) {
-      final fileName = result.fileName ?? 'BOX file';
+      final fileName = result.fileName ?? 'archivo BOX';
       _resetForm();
-      _showSuccess('Generated $fileName');
+      _showSuccess('Archivo generado: $fileName');
     } else {
-      _showError(result.error ?? 'Error generating BOX file');
+      _showError(result.error ?? 'Error al generar el archivo BOX');
       _scheduleExpectedFocus();
     }
   }
@@ -212,19 +282,19 @@ class _BoxingScreenState extends State<BoxingScreen> {
         confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('Clear Screen'),
+            title: const Text('Limpiar pantalla'),
             content: Text(
-              'Clear ${boxScans.length} scanned pieces? This action cannot be undone.',
+              'Limpiar ${boxScans.length} piezas escaneadas? Esta accion no se puede deshacer.',
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
+                child: const Text('Cancelar'),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('Clear'),
+                child: const Text('Limpiar'),
               ),
             ],
           ),
@@ -239,10 +309,9 @@ class _BoxingScreenState extends State<BoxingScreen> {
         return;
       }
 
-      // Clear pending scans from backend memory
-      if (boxIdController.text.isNotEmpty) {
-        await ApiService.clearBoxScans(boxIdController.text.trim());
-      }
+      await _clearCurrentBoxFromBackend();
+    } else if (boxIdController.text.isNotEmpty) {
+      await _clearCurrentBoxFromBackend();
     }
 
     _resetForm();
@@ -268,6 +337,52 @@ class _BoxingScreenState extends State<BoxingScreen> {
     _scheduleExpectedFocus();
   }
 
+  void _onProductionTypeChanged(String? value) {
+    if (value == null || boxIdLocked || isProcessing) {
+      _scheduleExpectedFocus();
+      return;
+    }
+
+    setState(() {
+      _setProductionSelection(value, _lineCodesByProductionType[value]!.first);
+    });
+    unawaited(_saveProductionSelection());
+    _scheduleExpectedFocus();
+  }
+
+  void _onLineCodeChanged(String? value) {
+    if (value == null || boxIdLocked || isProcessing) {
+      _scheduleExpectedFocus();
+      return;
+    }
+
+    setState(() {
+      _setProductionSelection(selectedProductionType, value);
+    });
+    unawaited(_saveProductionSelection());
+    _scheduleExpectedFocus();
+  }
+
+  void _setProductionSelection(String productionType, String lineCode) {
+    final validProductionType =
+        _lineCodesByProductionType.containsKey(productionType)
+        ? productionType
+        : _mainPcbType;
+    final validLines = _lineCodesByProductionType[validProductionType]!;
+
+    selectedProductionType = validProductionType;
+    selectedLineCode = validLines.contains(lineCode)
+        ? lineCode
+        : validLines.first;
+  }
+
+  Future<void> _saveProductionSelection() {
+    return AppSettingsService.saveProductionLineSettings(
+      productionType: selectedProductionType,
+      lineCode: selectedLineCode,
+    );
+  }
+
   Future<void> _onDeleteSelected() async {
     final index = selectedRowIndex;
     if (index == null ||
@@ -291,23 +406,60 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
     if (result.success) {
       setState(() {
-        boxScans.removeAt(index);
-        boxScans = _renumberLocalScans(boxScans);
-        selectedRowIndex = null;
-        currentBoxCount = result.boxCount ?? boxScans.length;
-        shiftCount = result.shiftCount ?? shiftCount;
+        _removeLocalScanAt(index, serverBoxCount: result.boxCount);
+        _applyDeleteCounts(result.boxCount, result.shiftCount);
         currentPartNumber = boxScans.isEmpty
             ? null
             : result.partNumber ?? currentPartNumber;
       });
+    } else if (_isBackendBoxAlreadyClear(result.error)) {
+      setState(() {
+        boxScans.clear();
+        selectedRowIndex = null;
+        currentBoxCount = 0;
+        shiftCount = 0;
+        currentPartNumber = null;
+      });
+    } else if (_isSelectedScanMissingOnBackend(result.error)) {
+      setState(() {
+        _removeLocalScanAt(index);
+        _applyDeleteCounts(null, null);
+        currentPartNumber = boxScans.isEmpty ? null : currentPartNumber;
+      });
     } else {
-      _showError(result.error ?? 'Error deleting scan');
+      _showError(result.error ?? 'Error al eliminar el escaneo');
     }
 
     setState(() {
       isProcessing = false;
     });
     _scheduleExpectedFocus();
+  }
+
+  void _removeLocalScanAt(int index, {int? serverBoxCount}) {
+    if (serverBoxCount != null && serverBoxCount <= 0) {
+      boxScans.clear();
+    } else if (index >= 0 && index < boxScans.length) {
+      boxScans.removeAt(index);
+    }
+
+    boxScans = _renumberLocalScans(boxScans);
+    selectedRowIndex = null;
+  }
+
+  void _applyDeleteCounts(int? boxCount, int? updatedShiftCount) {
+    currentBoxCount = boxCount ?? boxScans.length;
+    shiftCount = boxScans.isEmpty ? 0 : updatedShiftCount ?? shiftCount;
+  }
+
+  bool _isBackendBoxAlreadyClear(String? error) {
+    return error == 'No pending scans for this box' ||
+        error == 'No hay escaneos pendientes para esta caja';
+  }
+
+  bool _isSelectedScanMissingOnBackend(String? error) {
+    return error == 'Barcode not found in this box' ||
+        error == 'BarCode no encontrado en esta caja';
   }
 
   List<BoxScan> _renumberLocalScans(List<BoxScan> scans) {
@@ -323,6 +475,18 @@ class _BoxingScreenState extends State<BoxingScreen> {
     ];
   }
 
+  Future<void> _clearCurrentBoxFromBackend({bool showError = true}) async {
+    final boxCode = boxIdController.text.trim();
+    if (boxCode.isEmpty) {
+      return;
+    }
+
+    final cleared = await ApiService.clearBoxScans(boxCode);
+    if (!cleared && mounted && showError) {
+      _showError('Error al limpiar los escaneos pendientes de la caja');
+    }
+  }
+
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -331,6 +495,25 @@ class _BoxingScreenState extends State<BoxingScreen> {
         duration: const Duration(seconds: 3),
       ),
     );
+  }
+
+  String _displayErrorMessage(String message) {
+    if (selectedProductionType != _displayType) {
+      return message;
+    }
+
+    final lowerMessage = message.toLowerCase();
+    final isMainPcbValidationError =
+        lowerMessage.contains('ict') ||
+        lowerMessage.contains('fct') ||
+        lowerMessage.startsWith('ict ') ||
+        lowerMessage.startsWith('fct ');
+
+    if (!isMainPcbValidationError) {
+      return message;
+    }
+
+    return 'El flujo DISPLAY no esta desplegado en el backend. Actualiza/reinicia el servidor.';
   }
 
   void _showSuccess(String message) {
@@ -408,6 +591,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Box Id row
+                _buildProductionLineRow(),
+                const SizedBox(height: 4),
                 _buildBoxIdRow(),
                 const SizedBox(height: 4),
                 // BarCode row
@@ -468,6 +653,89 @@ class _BoxingScreenState extends State<BoxingScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: Colors.grey.shade400),
+      ),
+    );
+  }
+
+  Widget _buildProductionLineRow() {
+    final selectorEnabled = !boxIdLocked && !isProcessing;
+
+    return Row(
+      children: [
+        SizedBox(
+          width: 80,
+          child: Text(
+            'Line',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+          ),
+        ),
+        SizedBox(
+          width: 120,
+          height: 24,
+          child: DropdownButtonFormField<String>(
+            key: ValueKey('production-type-$selectedProductionType'),
+            initialValue: selectedProductionType,
+            isExpanded: true,
+            isDense: true,
+            style: const TextStyle(fontSize: 11, color: Colors.black),
+            decoration: _buildCompactDropdownDecoration(
+              enabled: selectorEnabled,
+            ),
+            items: _productionTypeLabels.entries
+                .map(
+                  (entry) => DropdownMenuItem<String>(
+                    value: entry.key,
+                    child: Text(entry.value, overflow: TextOverflow.ellipsis),
+                  ),
+                )
+                .toList(),
+            onChanged: selectorEnabled ? _onProductionTypeChanged : null,
+          ),
+        ),
+        const SizedBox(width: 6),
+        SizedBox(
+          width: 70,
+          height: 24,
+          child: DropdownButtonFormField<String>(
+            key: ValueKey('line-$selectedProductionType-$selectedLineCode'),
+            initialValue: selectedLineCode,
+            isExpanded: true,
+            isDense: true,
+            style: const TextStyle(fontSize: 11, color: Colors.black),
+            decoration: _buildCompactDropdownDecoration(
+              enabled: selectorEnabled,
+            ),
+            items: _availableLineCodes
+                .map(
+                  (lineCode) => DropdownMenuItem<String>(
+                    value: lineCode,
+                    child: Text(lineCode, overflow: TextOverflow.ellipsis),
+                  ),
+                )
+                .toList(),
+            onChanged: selectorEnabled ? _onLineCodeChanged : null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  InputDecoration _buildCompactDropdownDecoration({required bool enabled}) {
+    return InputDecoration(
+      fillColor: enabled ? const Color(0xFFFFFF99) : Colors.grey.shade300,
+      filled: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.zero,
+        borderSide: BorderSide(color: Colors.grey.shade400),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.zero,
+        borderSide: BorderSide(color: Colors.grey.shade400),
+      ),
+      disabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.zero,
+        borderSide: BorderSide(color: Colors.grey.shade400),
       ),
     );
   }

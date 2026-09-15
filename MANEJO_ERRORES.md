@@ -6,12 +6,17 @@ Este documento describe los casos de validacion del sistema de empaque AIRE, el 
 
 1. Al iniciar la app, el foco debe quedar en `Box Id`.
 2. Mientras no exista un `Box Id` escaneado, el foco siempre vuelve a `Box Id`.
-3. Despues de escanear `Box Id`, el campo queda bloqueado y el foco pasa a `BarCode`.
-4. Mientras la caja esta activa, el foco siempre vuelve a `BarCode` despues de cada scan, error o validacion.
-5. `Send` envia directo, sin confirmacion.
-6. `Clear Screen` es la unica accion que pide confirmacion.
-7. `Delete 1 Item` elimina directo la fila seleccionada, sin confirmacion.
-8. Despues de `Send` exitoso o `Clear Screen` confirmado, la pantalla se limpia y el foco vuelve a `Box Id`.
+3. Antes de escanear `Box Id`, el operador puede elegir tipo de flujo y linea.
+4. Para `MAIN PCB`, las lineas validas son `M1`, `M2`, `M3`, `M4`.
+5. Para `DISPLAY`, las lineas validas son `D1`, `D2`, `D3`.
+6. La seleccion de flujo y linea se guarda localmente en `%APPDATA%\IlsanPackingSystem\settings.json`.
+7. Al abrir la app se valida la version contra `GET /api/version`.
+8. Despues de escanear `Box Id`, el campo queda bloqueado, la app limpia piezas pendientes anteriores de esa caja en backend y el foco pasa a `BarCode`.
+9. Mientras la caja esta activa, el foco siempre vuelve a `BarCode` despues de cada scan, error o validacion.
+10. `Send` envia directo, sin confirmacion.
+11. `Clear Screen` es la unica accion que pide confirmacion.
+12. `Delete 1 Item` elimina directo la fila seleccionada, sin confirmacion.
+13. Despues de `Send` exitoso o `Clear Screen` confirmado, la pantalla se limpia y el foco vuelve a `Box Id`.
 
 ## Indicadores de Estado
 
@@ -29,9 +34,22 @@ Nota: `Network` indica comunicacion con el backend. El detalle interno de DB/car
 | Caso | Accion del usuario | Solicitud al backend | Mensaje en pantalla | Comportamiento de foco |
 |---|---|---|---|---|
 | App recien abierta | Ninguna | No aplica | Ninguno | Foco en `Box Id` |
+| Validacion de version correcta | Abrir app | `GET /api/version` | Ninguno | Foco en `Box Id` |
+| Backend sin endpoint de version o version incompatible | Abrir app | `GET /api/version` | `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` o `Version incompatible. App <actual>, requerida <requerida>.` | Foco en `Box Id` |
+| Cambio de tipo/linea | Seleccionar `MAIN PCB`/`DISPLAY` y linea antes de escanear caja | No se envia request | Ninguno | Foco vuelve a `Box Id` |
 | `Box Id` vacio | Enter en `Box Id` vacio | No se envia request | Ninguno | Foco permanece/vuelve a `Box Id` |
-| `Box Id` capturado | Enter despues de capturar `Box Id` | No se valida aun contra backend | Ninguno | `Box Id` se bloquea y foco pasa a `BarCode` |
-| `Box Id` con formato invalido | Se intenta registrar un `BarCode` con `Box Id` invalido | `POST /api/scans` | `Invalid Box ID format` | Foco vuelve a `BarCode` |
+| `Box Id` capturado | Enter despues de capturar `Box Id` | `DELETE /api/scans/box/:boxCode` para descartar pendientes anteriores | Ninguno | `Box Id` se bloquea, inicia lista vacia y foco pasa a `BarCode` |
+| `Box Id` capturado tras cerrar/reabrir app | Enter despues de capturar un `Box Id` que tenia piezas pendientes en backend | `DELETE /api/scans/box/:boxCode` | Ninguno | Borra el trabajo anterior, mantiene contador en 0 y foco pasa a `BarCode` |
+| `Box Id` con formato invalido | Se intenta registrar un `BarCode` con `Box Id` invalido | `POST /api/scans` | `Formato de Box Id invalido` | Foco vuelve a `BarCode` |
+
+## Selector de Linea
+
+| Tipo | Lineas permitidas | Validacion backend |
+|---|---|---|
+| `MAIN PCB` | `M1`, `M2`, `M3`, `M4` | Valida ICT en `history_ict` y FCT en `fct_test_results` |
+| `DISPLAY` | `D1`, `D2`, `D3` | Valida prueba electrica en `history_prueba_electrica` |
+
+Mientras hay una caja activa, el selector queda bloqueado para evitar mezclar flujos o lineas dentro de la misma caja.
 
 Formato esperado por backend para `Box Id`:
 
@@ -51,11 +69,14 @@ LGB922609091234
 |---|---|---|---|---|
 | No hay `Box Id` activo | Intentar capturar `BarCode` sin caja bloqueada | No se envia request | Ninguno | Foco vuelve a `Box Id` |
 | `BarCode` vacio | Enter/TAB con campo vacio | No se envia request | Ninguno | Foco permanece/vuelve a `BarCode` si la caja esta activa |
-| `BarCode` menor a 11 caracteres | Capturar barcode corto | HTTP 400 | `BarCode too short (minimum 11 characters)` | Limpia `BarCode` y foco vuelve a `BarCode` |
-| No se puede extraer NP | Capturar barcode con formato no interpretable | HTTP 400 | `Could not extract part number from BarCode` | Limpia `BarCode` y foco vuelve a `BarCode` |
-| Barcode duplicado en la misma caja | Capturar un serial ya escaneado en la caja activa | HTTP 409 | `Barcode already scanned in this box` | Limpia `BarCode` y foco vuelve a `BarCode` |
+| `BarCode` menor a 11 caracteres | Capturar barcode corto | HTTP 400 | `BarCode demasiado corto (minimo 11 caracteres)` | Limpia `BarCode` y foco vuelve a `BarCode` |
+| No se puede extraer NP | Capturar barcode con formato no interpretable | HTTP 400 | `No se pudo extraer el numero de parte del BarCode` | Limpia `BarCode` y foco vuelve a `BarCode` |
+| Barcode duplicado en la misma caja | Capturar un serial ya escaneado en la caja activa | HTTP 409 | `Este BarCode ya fue escaneado en esta caja` | Limpia `BarCode` y foco vuelve a `BarCode` |
 | Barcode valido | Capturar barcode aceptado | HTTP 200 | Ninguno | Agrega fila a `Boxing List`, limpia `BarCode` y foco vuelve a `BarCode` |
-| Error de red/API | Backend no responde o request falla | Sin respuesta HTTP valida | `Connection error: <detalle>` | Foco vuelve al campo esperado |
+| Tipo de produccion invalido | App o cliente externo envia tipo no permitido | HTTP 400 | `Tipo de produccion invalido. Valores permitidos: MAIN PCB, DISPLAY` | Limpia `BarCode` y foco vuelve a `BarCode` |
+| Linea invalida para el tipo | App o cliente externo envia `M*` en `DISPLAY` o `D*` en `MAIN PCB` | HTTP 400 | `Linea invalida para <tipo>. Lineas permitidas: <lista>` | Limpia `BarCode` y foco vuelve a `BarCode` |
+| Se intenta mezclar linea en una caja | Cliente externo registra otro flujo/linea en la misma caja pendiente | HTTP 409 | `La linea de produccion no coincide. Esperado <tipo linea>, recibido <tipo linea>` | Limpia `BarCode` y foco vuelve a `BarCode` |
+| Error de red/API | Backend no responde o request falla | Sin respuesta HTTP valida | `Error de conexion: <detalle>` | Foco vuelve al campo esperado |
 
 ## Regla de Numero de Parte
 
@@ -65,7 +86,7 @@ El primer `BarCode` aceptado en una caja define el numero de parte permitido par
 |---|---|---|---|
 | Primer scan de la caja | `EBR23966209922609070564` | HTTP 200 | Ninguno |
 | Siguiente scan con mismo NP | `EBR23966209922609070569` | HTTP 200 | Ninguno |
-| Siguiente scan con NP distinto | Esperado `EBR23966209`, recibido `EBR30299355` | HTTP 409 | `Part number mismatch. Expected EBR23966209, got EBR30299355` |
+| Siguiente scan con NP distinto | Esperado `EBR23966209`, recibido `EBR30299355` | HTTP 409 | `Numero de parte distinto. Esperado EBR23966209, recibido EBR30299355` |
 
 ## Validacion ICT
 
@@ -86,8 +107,8 @@ Campos usados:
 | Caso | Respuesta backend | Mensaje en pantalla |
 |---|---|---|
 | ICT encontrado y `resultado = OK` | Continua validacion | Ninguno |
-| No existe registro ICT para el barcode | HTTP 409 | `ICT status not found for this barcode` |
-| Ultimo ICT no es `OK` | HTTP 409 | `ICT status must be OK. Current status: NG` |
+| No existe registro ICT para el barcode | HTTP 409 | `No se encontro estatus ICT para este BarCode` |
+| Ultimo ICT no es `OK` | HTTP 409 | `El estatus ICT debe ser OK. Estatus actual: NG` |
 
 ## Validacion FCT
 
@@ -108,9 +129,45 @@ Campos usados:
 | Caso | Respuesta backend | Mensaje en pantalla |
 |---|---|---|
 | FCT encontrado y `final_result = PASS` | Continua y acepta scan | Ninguno |
-| No existe registro FCT para el barcode | HTTP 409 | `FCT status not found for this barcode` |
-| Ultimo FCT es `FAIL` | HTTP 409 | `FCT status must be OK. Current status: FAIL` |
-| Ultimo FCT es `UNKNOWN` | HTTP 409 | `FCT status must be OK. Current status: UNKNOWN` |
+| No existe registro FCT para el barcode | HTTP 409 | `No se encontro estatus FCT para este BarCode` |
+| Ultimo FCT es `FAIL` | HTTP 409 | `El estatus FCT debe ser OK. Estatus actual: FAIL` |
+| Ultimo FCT es `UNKNOWN` | HTTP 409 | `El estatus FCT debe ser OK. Estatus actual: UNKNOWN` |
+
+## Validacion Prueba Electrica DISPLAY
+
+La validacion de `DISPLAY` consulta la tabla:
+
+```text
+history_prueba_electrica
+```
+
+Campos usados:
+
+| Campo | Uso |
+|---|---|
+| `raw` | Serial escaneado |
+| `event_id` | Busqueda alternativa del identificador del evento electrico |
+| `lot_no` | Busqueda alternativa del serial escaneado |
+| `nparte` | Busqueda alternativa por numero de parte extraido del barcode |
+| `display_verificado` | Debe indicar OK/verificado |
+| `linea` | Si viene informada, debe coincidir con la linea seleccionada `D1`, `D2` o `D3` |
+| `ts` | Fecha/hora del resultado; se usa el registro mas reciente |
+
+Para `DISPLAY`, el backend acepta tanto el barcode completo como los segmentos de un formato compuesto separado por `ñ`. Ejemplo:
+
+```text
+I20260910'004'00133ñMAINñEBR76683912ñ1ñ
+```
+
+Con ese formato se buscan valores como el raw completo, `I20260910'004'00133` y el numero de parte `EBR76683912` dentro de `history_prueba_electrica`.
+
+| Caso | Respuesta backend | Mensaje en pantalla |
+|---|---|---|
+| Registro encontrado y `display_verificado = 1` | Acepta scan | Ninguno |
+| No existe registro de prueba electrica para el barcode | HTTP 409 | `No se encontro prueba electrica para este BarCode` |
+| Registro encontrado pero no verificado | HTTP 409 | `La prueba electrica debe estar OK. Estatus actual: NG` |
+| Registro encontrado en otra linea | HTTP 409 | `La linea de prueba electrica no coincide. Esperado D1, recibido D2` |
+| Backend remoto sin flujo DISPLAY desplegado | HTTP 409 con error ICT/FCT heredado | `El flujo DISPLAY no esta desplegado en el backend. Actualiza/reinicia el servidor.` |
 
 ## Send
 
@@ -118,12 +175,12 @@ Campos usados:
 
 | Caso | Solicitud al backend | Respuesta backend | Mensaje en pantalla | Comportamiento de foco |
 |---|---|---|---|---|
-| Sin caja activa o sin piezas | No se envia request | No aplica | `Please scan at least one piece before sending` | Foco vuelve al campo esperado |
-| Caja con piezas | `POST /api/scans/box/:boxCode/send` | HTTP 200 | `Generated <fileName>` | Limpia pantalla y foco vuelve a `Box Id` |
-| Backend no tiene piezas pendientes para esa caja | `POST /api/scans/box/:boxCode/send` | HTTP 400 | `No pending scans for this box` | Foco vuelve a `BarCode` |
-| `Box Id` invalido | `POST /api/scans/box/:boxCode/send` | HTTP 400 | `Invalid Box ID format` | Foco vuelve a `BarCode` |
-| Error escribiendo archivo BOX DATA | `POST /api/scans/box/:boxCode/send` | HTTP 500 | `Failed to send box file` | Foco vuelve a `BarCode` |
-| Error de red/API | `POST /api/scans/box/:boxCode/send` | Sin respuesta HTTP valida | `Connection error: <detalle>` | Foco vuelve a `BarCode` |
+| Sin caja activa o sin piezas | No se envia request | No aplica | `Escanee al menos una pieza antes de enviar` | Foco vuelve al campo esperado |
+| Caja con piezas | `POST /api/scans/box/:boxCode/send` | HTTP 200 | `Archivo generado: <fileName>` | Limpia pantalla y foco vuelve a `Box Id` |
+| Backend no tiene piezas pendientes para esa caja | `POST /api/scans/box/:boxCode/send` | HTTP 400 | `No hay escaneos pendientes para esta caja` | Foco vuelve a `BarCode` |
+| `Box Id` invalido | `POST /api/scans/box/:boxCode/send` | HTTP 400 | `Formato de Box Id invalido` | Foco vuelve a `BarCode` |
+| Error escribiendo archivo BOX DATA | `POST /api/scans/box/:boxCode/send` | HTTP 500 | `Error al generar el archivo BOX` | Foco vuelve a `BarCode` |
+| Error de red/API | `POST /api/scans/box/:boxCode/send` | Sin respuesta HTTP valida | `Error de conexion: <detalle>` | Foco vuelve a `BarCode` |
 
 ## Delete 1 Item
 
@@ -134,10 +191,11 @@ Campos usados:
 | Sin fila seleccionada | Presionar boton deshabilitado | No aplica | Ninguno | Foco vuelve al campo esperado |
 | Seleccionar fila | Click en una fila de `Boxing List` | No se envia request | Ninguno | La fila queda resaltada y el foco vuelve a `BarCode` |
 | Presionar `Delete 1 Item` con fila seleccionada | Click en boton habilitado | `DELETE /api/scans/box/:boxCode/scan/:barcode` | Ninguno si elimina correctamente | Quita la fila, actualiza contadores y foco vuelve a `BarCode` |
-| Backend no tiene piezas para esa caja | Click en boton habilitado, pero backend ya no tiene la caja pendiente | HTTP 404 | `No pending scans for this box` | Foco vuelve a `BarCode` |
-| Barcode no existe en la caja pendiente | Click en boton habilitado, pero el barcode no esta en backend | HTTP 404 | `Barcode not found in this box` | Foco vuelve a `BarCode` |
+| Backend no tiene piezas para esa caja | Click en boton habilitado, pero backend ya no tiene la caja pendiente | HTTP 200 en backend actualizado o HTTP 404 en backend anterior | Ninguno | Limpia filas locales de esa caja y foco vuelve a `BarCode` |
+| Barcode no existe en la caja pendiente | Click en boton habilitado, pero el barcode no esta en backend | HTTP 200 en backend actualizado o HTTP 404 en backend anterior | Ninguno | Quita la fila local seleccionada y foco vuelve a `BarCode` |
+| Endpoint no desplegado en backend | El servidor devuelve HTML `Cannot DELETE ...` | HTTP 404 HTML | `El endpoint para eliminar no esta desplegado en el backend. Actualiza/reinicia el servidor.` | Foco vuelve a `BarCode` |
 | `Box Id` o `BarCode` invalido | Request de eliminacion con datos invalidos | HTTP 400 | Mensaje de validacion del backend | Foco vuelve a `BarCode` |
-| Error interno | Falla el backend al eliminar | HTTP 500 | `Failed to delete scan` | Foco vuelve a `BarCode` |
+| Error interno | Falla el backend al eliminar | HTTP 500 | `Error al eliminar el escaneo` | Foco vuelve a `BarCode` |
 
 ## Clear Screen
 
@@ -146,10 +204,11 @@ Campos usados:
 | Caso | Solicitud en pantalla | Accion backend | Mensaje en pantalla | Comportamiento de foco |
 |---|---|---|---|---|
 | No hay caja ni piezas | Ninguna | No se envia request | Ninguno | Foco vuelve a `Box Id` |
-| Hay piezas escaneadas | Modal `Clear Screen` con texto `Clear <N> scanned pieces? This action cannot be undone.` | Espera decision del usuario | Ninguno | Autofoco se pausa mientras el modal esta abierto |
-| Usuario presiona `Cancel` | Cierra modal | No limpia backend | Ninguno | Foco vuelve a `BarCode` |
-| Usuario presiona `Clear` | Cierra modal | `DELETE /api/scans/box/:boxCode` | Ninguno | Limpia pantalla y foco vuelve a `Box Id` |
-| Error al limpiar backend | `DELETE /api/scans/box/:boxCode` falla | La app no muestra error actualmente | Ninguno | Limpia pantalla local y foco vuelve a `Box Id` |
+| Caja activa sin filas visibles | Click en `Clear Screen` despues de desincronizacion local | `DELETE /api/scans/box/:boxCode` | Ninguno si limpia correctamente | Limpia pantalla y foco vuelve a `Box Id` |
+| Hay piezas escaneadas | Modal `Limpiar pantalla` con texto `Limpiar <N> piezas escaneadas? Esta accion no se puede deshacer.` | Espera decision del usuario | Ninguno | Autofoco se pausa mientras el modal esta abierto |
+| Usuario presiona `Cancelar` | Cierra modal | No limpia backend | Ninguno | Foco vuelve a `BarCode` |
+| Usuario presiona `Limpiar` | Cierra modal | `DELETE /api/scans/box/:boxCode` | Ninguno | Limpia pantalla y foco vuelve a `Box Id` |
+| Error al limpiar backend | `DELETE /api/scans/box/:boxCode` falla | La app muestra error | `Error al limpiar los escaneos pendientes de la caja` | Limpia pantalla local y foco vuelve a `Box Id` |
 
 ## Respuestas Backend
 
@@ -157,38 +216,53 @@ Campos usados:
 
 | Validacion | HTTP | JSON |
 |---|---:|---|
-| `Box ID` requerido | 400 | `{ "error": "Box ID is required" }` |
-| Formato de `Box ID` invalido | 400 | `{ "error": "Invalid Box ID format" }` |
-| `BarCode` requerido | 400 | `{ "error": "BarCode is required" }` |
-| `BarCode` corto | 400 | `{ "error": "BarCode too short (minimum 11 characters)" }` |
-| NP no extraible | 400 | `{ "error": "Could not extract part number from BarCode" }` |
-| Barcode duplicado | 409 | `{ "error": "Barcode already scanned in this box" }` |
-| NP distinto al de la caja | 409 | `{ "error": "Part number mismatch. Expected <expected>, got <received>" }` |
-| ICT no encontrado | 409 | `{ "error": "ICT status not found for this barcode", "quality": { ... } }` |
-| ICT no OK | 409 | `{ "error": "ICT status must be OK. Current status: <status>", "quality": { ... } }` |
-| FCT no encontrado | 409 | `{ "error": "FCT status not found for this barcode", "quality": { ... } }` |
-| FCT no OK | 409 | `{ "error": "FCT status must be OK. Current status: <status>", "quality": { ... } }` |
-| Error interno | 500 | `{ "error": "Failed to register scan", "details": "<detalle>" }` |
+| `Box ID` requerido | 400 | `{ "error": "El Box Id es requerido" }` |
+| Formato de `Box ID` invalido | 400 | `{ "error": "Formato de Box Id invalido" }` |
+| `BarCode` requerido | 400 | `{ "error": "El BarCode es requerido" }` |
+| `BarCode` corto | 400 | `{ "error": "BarCode demasiado corto (minimo 11 caracteres)" }` |
+| NP no extraible | 400 | `{ "error": "No se pudo extraer el numero de parte del BarCode" }` |
+| Tipo de produccion invalido | 400 | `{ "error": "Tipo de produccion invalido. Valores permitidos: MAIN PCB, DISPLAY" }` |
+| Linea invalida para el tipo | 400 | `{ "error": "Linea invalida para <tipo>. Lineas permitidas: <lista>" }` |
+| Barcode duplicado | 409 | `{ "error": "Este BarCode ya fue escaneado en esta caja" }` |
+| Flujo/linea distinta en la misma caja | 409 | `{ "error": "La linea de produccion no coincide. Esperado <tipo linea>, recibido <tipo linea>" }` |
+| NP distinto al de la caja | 409 | `{ "error": "Numero de parte distinto. Esperado <expected>, recibido <received>" }` |
+| ICT no encontrado | 409 | `{ "error": "No se encontro estatus ICT para este BarCode", "quality": { ... } }` |
+| ICT no OK | 409 | `{ "error": "El estatus ICT debe ser OK. Estatus actual: <status>", "quality": { ... } }` |
+| FCT no encontrado | 409 | `{ "error": "No se encontro estatus FCT para este BarCode", "quality": { ... } }` |
+| FCT no OK | 409 | `{ "error": "El estatus FCT debe ser OK. Estatus actual: <status>", "quality": { ... } }` |
+| Prueba electrica DISPLAY no encontrada | 409 | `{ "error": "No se encontro prueba electrica para este BarCode", "quality": { ... } }` |
+| Prueba electrica DISPLAY no OK | 409 | `{ "error": "La prueba electrica debe estar OK. Estatus actual: <status>", "quality": { ... } }` |
+| Prueba electrica DISPLAY en otra linea | 409 | `{ "error": "La linea de prueba electrica no coincide. Esperado <linea>, recibido <linea>", "quality": { ... } }` |
+| Cliente DISPLAY contra backend anterior | 409 | Backend devuelve ICT/FCT, la app lo presenta como `El flujo DISPLAY no esta desplegado en el backend. Actualiza/reinicia el servidor.` |
+| Error interno | 500 | `{ "error": "Error al registrar el escaneo", "details": "<detalle>" }` |
+
+### `GET /api/version`
+
+| Validacion | HTTP | JSON |
+|---|---:|---|
+| Version compatible | 200 | `{ "version": "1.0.0", "requiredClientVersion": "1.0.0", "minimumClientVersion": "1.0.0" }` |
+| Endpoint no disponible | 404 | La app muestra `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` |
+| Version incompatible | 200 con otra version requerida | La app muestra `Version incompatible. App <actual>, requerida <requerida>.` |
 
 ### `POST /api/scans/box/:boxCode/send`
 
 | Validacion | HTTP | JSON |
 |---|---:|---|
-| `Box ID` invalido | 400 | `{ "error": "Invalid Box ID format" }` |
-| Sin scans pendientes | 400 | `{ "error": "No pending scans for this box" }` |
+| `Box ID` invalido | 400 | `{ "error": "Formato de Box Id invalido" }` |
+| Sin scans pendientes | 400 | `{ "error": "No hay escaneos pendientes para esta caja" }` |
 | Envio exitoso | 200 | `{ "success": true, "boxCode": "<box>", "file": { "name": "<archivo>", "path": "<ruta>", "rows": <n>, "lastScan": "<fecha>" } }` |
-| Error interno | 500 | `{ "error": "Failed to send box file", "details": "<detalle>" }` |
+| Error interno | 500 | `{ "error": "Error al generar el archivo BOX", "details": "<detalle>" }` |
 
 ### `DELETE /api/scans/box/:boxCode/scan/:barcode`
 
 | Validacion | HTTP | JSON |
 |---|---:|---|
-| `Box ID` invalido | 400 | `{ "error": "Invalid Box ID format" }` |
+| `Box ID` invalido | 400 | `{ "error": "Formato de Box Id invalido" }` |
 | `BarCode` invalido | 400 | `{ "error": "<mensaje de validacion BarCode>" }` |
-| Sin scans pendientes | 404 | `{ "error": "No pending scans for this box" }` |
-| Barcode no encontrado en la caja | 404 | `{ "error": "Barcode not found in this box" }` |
+| Sin scans pendientes | 200 | `{ "success": true, "alreadyDeleted": true, "boxCode": "<box>", "deleted": null, "currentPartNumber": null, "counts": { "box": 0, "shift": <n> } }` |
+| Barcode no encontrado en la caja | 200 | `{ "success": true, "alreadyDeleted": true, "boxCode": "<box>", "deleted": { "serial": "<barcode>", "partNumber": "<np>" }, "currentPartNumber": "<np|null>", "counts": { "box": <n>, "shift": <n> } }` |
 | Eliminacion exitosa | 200 | `{ "success": true, "boxCode": "<box>", "deleted": { "serial": "<barcode>", "partNumber": "<np>" }, "currentPartNumber": "<np|null>", "counts": { "box": <n>, "shift": <n> } }` |
-| Error interno | 500 | `{ "error": "Failed to delete scan", "details": "<detalle>" }` |
+| Error interno | 500 | `{ "error": "Error al eliminar el escaneo", "details": "<detalle>" }` |
 
 ### `GET /api/scans/status`
 
@@ -223,7 +297,7 @@ share.connected: true
 4. La app debe mostrar:
 
 ```text
-Part number mismatch. Expected <expected>, got <received>
+Numero de parte distinto. Esperado <expected>, recibido <received>
 ```
 
 ### Probar rechazo por ICT/FCT
@@ -233,11 +307,33 @@ Part number mismatch. Expected <expected>, got <received>
 3. La app debe mostrar uno de estos mensajes:
 
 ```text
-ICT status not found for this barcode
-ICT status must be OK. Current status: NG
-FCT status not found for this barcode
-FCT status must be OK. Current status: FAIL
+No se encontro estatus ICT para este BarCode
+El estatus ICT debe ser OK. Estatus actual: NG
+No se encontro estatus FCT para este BarCode
+El estatus FCT debe ser OK. Estatus actual: FAIL
 ```
+
+### Probar flujo DISPLAY
+
+1. Seleccionar `DISPLAY`.
+2. Seleccionar linea `D1`, `D2` o `D3`.
+3. Escanear `Box Id` valido.
+4. Escanear un barcode existente en `history_prueba_electrica` con `display_verificado = 1`.
+5. La app debe aceptar el scan sin consultar ICT/FCT.
+6. Probar tambien el formato compuesto `I20260910'004'00133ñMAINñEBR76683912ñ1ñ`; el backend debe buscarlo en `raw`, `event_id`, `lot_no` y `nparte`.
+7. Escanear un barcode inexistente en `history_prueba_electrica`.
+8. La app debe mostrar:
+
+```text
+No se encontro prueba electrica para este BarCode
+```
+
+### Probar selector MAIN PCB
+
+1. Seleccionar `MAIN PCB`.
+2. Confirmar que las lineas disponibles son `M1`, `M2`, `M3`, `M4`.
+3. Escanear una pieza valida de MAIN PCB.
+4. La app debe mantener la validacion actual de ICT y FCT.
 
 ### Probar Send sin confirmacion
 
@@ -248,7 +344,7 @@ FCT status must be OK. Current status: FAIL
 5. Si el envio es exitoso, debe mostrarse:
 
 ```text
-Generated <fileName>
+Archivo generado: <fileName>
 ```
 
 ### Probar Delete 1 Item
@@ -269,8 +365,8 @@ Generated <fileName>
 4. Debe aparecer el modal:
 
 ```text
-Clear <N> scanned pieces? This action cannot be undone.
+Limpiar <N> piezas escaneadas? Esta accion no se puede deshacer.
 ```
 
-5. `Cancel` conserva la caja actual y regresa foco a `BarCode`.
-6. `Clear` limpia la pantalla y regresa foco a `Box Id`.
+5. `Cancelar` conserva la caja actual y regresa foco a `BarCode`.
+6. `Limpiar` limpia la pantalla y regresa foco a `Box Id`.
