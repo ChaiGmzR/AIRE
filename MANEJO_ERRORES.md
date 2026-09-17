@@ -104,22 +104,15 @@ Al presionar `Send`, la app envia la caja completa:
 }
 ```
 
-El backend vuelve a validar Box Id, numero de parte, duplicados, linea y calidad. Despues registra la caja y sus piezas en MySQL dentro de una transaccion con indices unicos:
+El backend vuelve a validar Box Id, numero de parte, linea y calidad. Despues registra la caja y sus piezas en `box_scans` dentro de una transaccion. Se conserva el comportamiento existente de esa tabla:
 
-| Tabla | Regla de unicidad |
+| Regla | Comportamiento |
 |---|---|
-| `aire_box_registry` | Un `box_code` no puede registrarse dos veces |
-| `aire_piece_registry` | Un `barcode` no puede registrarse en dos cajas |
+| Box Id | Si `box_scans` ya tiene filas con ese `box_code`, el envio se rechaza |
+| BarCode en otra caja | Se permite, igual que en el historial actual |
+| BarCode repetido en la misma caja | Se conserva la regla de `box_scans`: depende de `(serial, box_code, first_scan)` |
 
-Las tablas se crean automaticamente al primer `Send` si el usuario de DB tiene permisos DDL. Si dos PCs envian el mismo Box Id o BarCode al mismo tiempo, solo una transaccion puede confirmar el registro; la otra recibe HTTP 409.
-
-Antes de habilitar el flujo en produccion se debe ejecutar una vez la migracion del historico:
-
-```powershell
-npm run backfill:boxing-registry
-```
-
-La migracion lee los archivos existentes en `BOX_DATA_PATH` y registra Box Id y BarCode con flujo `LEGACY`, evitando que una caja o pieza historica vuelva a registrarse.
+Si dos PCs envian el mismo Box Id al mismo tiempo, el backend usa un bloqueo temporal por caja; solo una puede registrarlo y la otra recibe HTTP 409. No se agrega una restriccion global nueva sobre `serial`.
 
 ## Validacion ICT
 
@@ -271,7 +264,7 @@ La app cliente actual envia `validateOnly=true`. El endpoint valida el barcode y
 
 | Validacion | HTTP | JSON |
 |---|---:|---|
-| Version compatible | 200 | `{ "version": "1.0.2", "requiredClientVersion": "1.0.2", "minimumClientVersion": "1.0.2" }` |
+| Version compatible | 200 | `{ "version": "1.2.0", "requiredClientVersion": "1.2.0", "minimumClientVersion": "1.2.0" }` |
 | Endpoint no disponible | 404 | La app muestra `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` |
 | Version incompatible | 200 con otra version requerida | La app muestra `Version incompatible. App <actual>, requerida <requerida>.` |
 
@@ -282,8 +275,8 @@ La app cliente actual envia `validateOnly=true`. El endpoint valida el barcode y
 | `Box ID` invalido | 400 | `{ "error": "Formato de Box Id invalido" }` |
 | Sin scans en el payload | 400 | `{ "error": "No hay escaneos pendientes para esta caja" }` |
 | Box Id ya registrado | 409 | `{ "error": "El Box Id <box> ya fue registrado previamente" }` |
-| BarCode ya registrado en otra caja | 409 | `{ "error": "El BarCode <barcode> ya fue registrado previamente en la caja <box>" }` |
-| Duplicado dentro del envio | 409 | `{ "error": "Este BarCode ya fue escaneado en esta caja: <barcode>" }` |
+| BarCode ya registrado en otra caja | 200 | Se permite y se registra en `box_scans` |
+| Registro exactamente duplicado en `box_scans` | 409 | `{ "error": "Una pieza ya fue registrada con los mismos datos en box_scans" }` |
 | Calidad no valida en el segundo chequeo | 409 | Mensaje ICT/FCT o prueba electrica correspondiente |
 | Envio exitoso | 200 | `{ "success": true, "boxCode": "<box>", "file": { "name": "<archivo>", "path": "<ruta>", "rows": <n>, "lastScan": "<fecha>" } }` |
 | Error interno | 500 | `{ "error": "Error al generar el archivo BOX", "details": "<detalle>" }` |
