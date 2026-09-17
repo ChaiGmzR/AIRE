@@ -11,11 +11,11 @@ Este documento describe los casos de validacion del sistema de empaque AIRE, el 
 5. Para `DISPLAY`, las lineas validas son `D1`, `D2`, `D3`.
 6. La seleccion de flujo y linea se guarda localmente en `%APPDATA%\IlsanPackingSystem\settings.json`.
 7. Al abrir la app se valida la version contra `GET /api/version`.
-8. Despues de escanear `Box Id`, el campo queda bloqueado, la app limpia piezas pendientes anteriores de esa caja en backend y el foco pasa a `BarCode`.
+8. Despues de escanear `Box Id`, el campo queda bloqueado, la app inicia una lista local vacia y el foco pasa a `BarCode`.
 9. Mientras la caja esta activa, el foco siempre vuelve a `BarCode` despues de cada scan, error o validacion.
 10. `Send` envia directo, sin confirmacion.
 11. `Clear Screen` es la unica accion que pide confirmacion.
-12. `Delete 1 Item` elimina directo la fila seleccionada, sin confirmacion.
+12. `Delete 1 Item` elimina directo la fila seleccionada de la lista local, sin confirmacion.
 13. Despues de `Send` exitoso o `Clear Screen` confirmado, la pantalla se limpia y el foco vuelve a `Box Id`.
 
 ## Indicadores de Estado
@@ -38,8 +38,8 @@ Nota: `Network` indica comunicacion con el backend. El detalle interno de DB/car
 | Backend sin endpoint de version o version incompatible | Abrir app | `GET /api/version` | `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` o `Version incompatible. App <actual>, requerida <requerida>.` | Foco en `Box Id` |
 | Cambio de tipo/linea | Seleccionar `MAIN PCB`/`DISPLAY` y linea antes de escanear caja | No se envia request | Ninguno | Foco vuelve a `Box Id` |
 | `Box Id` vacio | Enter en `Box Id` vacio | No se envia request | Ninguno | Foco permanece/vuelve a `Box Id` |
-| `Box Id` capturado | Enter despues de capturar `Box Id` | `DELETE /api/scans/box/:boxCode` para descartar pendientes anteriores | Ninguno | `Box Id` se bloquea, inicia lista vacia y foco pasa a `BarCode` |
-| `Box Id` capturado tras cerrar/reabrir app | Enter despues de capturar un `Box Id` que tenia piezas pendientes en backend | `DELETE /api/scans/box/:boxCode` | Ninguno | Borra el trabajo anterior, mantiene contador en 0 y foco pasa a `BarCode` |
+| `Box Id` capturado | Enter despues de capturar `Box Id` | No se envia request | Ninguno | `Box Id` se bloquea, inicia lista local vacia y foco pasa a `BarCode` |
+| `Box Id` capturado tras cerrar/reabrir app | Enter despues de capturar un `Box Id` | No se envia request | Ninguno | El trabajo local anterior no se recupera y foco pasa a `BarCode` |
 | `Box Id` con formato invalido | Se intenta registrar un `BarCode` con `Box Id` invalido | `POST /api/scans` | `Formato de Box Id invalido` | Foco vuelve a `BarCode` |
 
 ## Selector de Linea
@@ -72,10 +72,10 @@ LGB922609091234
 | `BarCode` menor a 11 caracteres | Capturar barcode corto | HTTP 400 | `BarCode demasiado corto (minimo 11 caracteres)` | Limpia `BarCode` y foco vuelve a `BarCode` |
 | No se puede extraer NP | Capturar barcode con formato no interpretable | HTTP 400 | `No se pudo extraer el numero de parte del BarCode` | Limpia `BarCode` y foco vuelve a `BarCode` |
 | Barcode duplicado en la misma caja | Capturar un serial ya escaneado en la caja activa | HTTP 409 | `Este BarCode ya fue escaneado en esta caja` | Limpia `BarCode` y foco vuelve a `BarCode` |
-| Barcode valido | Capturar barcode aceptado | HTTP 200 | Ninguno | Agrega fila a `Boxing List`, limpia `BarCode` y foco vuelve a `BarCode` |
+| Barcode valido | Capturar barcode aceptado | `POST /api/scans` con `validateOnly=true` | Ninguno | Agrega fila a la lista local, limpia `BarCode` y foco vuelve a `BarCode` |
 | Tipo de produccion invalido | App o cliente externo envia tipo no permitido | HTTP 400 | `Tipo de produccion invalido. Valores permitidos: MAIN PCB, DISPLAY` | Limpia `BarCode` y foco vuelve a `BarCode` |
 | Linea invalida para el tipo | App o cliente externo envia `M*` en `DISPLAY` o `D*` en `MAIN PCB` | HTTP 400 | `Linea invalida para <tipo>. Lineas permitidas: <lista>` | Limpia `BarCode` y foco vuelve a `BarCode` |
-| Se intenta mezclar linea en una caja | Cliente externo registra otro flujo/linea en la misma caja pendiente | HTTP 409 | `La linea de produccion no coincide. Esperado <tipo linea>, recibido <tipo linea>` | Limpia `BarCode` y foco vuelve a `BarCode` |
+| Se intenta mezclar linea en una caja | La app o cliente externo envia datos inconsistentes | HTTP 400/409 en `Send` | `La linea de produccion no coincide. Esperado <tipo linea>, recibido <tipo linea>` | Conserva la caja para corregirla |
 | Error de red/API | Backend no responde o request falla | Sin respuesta HTTP valida | `Error de conexion: <detalle>` | Foco vuelve al campo esperado |
 
 ## Regla de Numero de Parte
@@ -84,9 +84,42 @@ El primer `BarCode` aceptado en una caja define el numero de parte permitido par
 
 | Caso | Ejemplo | Respuesta backend | Mensaje en pantalla |
 |---|---|---|---|
-| Primer scan de la caja | `EBR23966209922609070564` | HTTP 200 | Ninguno |
-| Siguiente scan con mismo NP | `EBR23966209922609070569` | HTTP 200 | Ninguno |
-| Siguiente scan con NP distinto | Esperado `EBR23966209`, recibido `EBR30299355` | HTTP 409 | `Numero de parte distinto. Esperado EBR23966209, recibido EBR30299355` |
+| Primer scan de la caja | `EBR23966209922609070564` | Validacion local y `POST /api/scans` | Ninguno |
+| Siguiente scan con mismo NP | `EBR23966209922609070569` | Validacion local y backend en `Send` | Ninguno |
+| Siguiente scan con NP distinto | Esperado `EBR23966209`, recibido `EBR30299355` | La app lo rechaza; backend tambien lo rechaza en `Send` | `Numero de parte distinto. Esperado EBR23966209, recibido EBR30299355` |
+
+## Concurrencia y Registro Definitivo
+
+La lista de piezas antes de `Send` vive solamente en la app cliente. Esto evita que una PC borre o modifique el trabajo local de otra PC que use el mismo Box Id.
+
+Al presionar `Send`, la app envia la caja completa:
+
+```json
+{
+  "productionType": "MAIN_PCB",
+  "lineCode": "M1",
+  "scans": [
+    { "barcode": "EBR23966209922609070564", "firstScan": "2026-09-17T10:00:00.000Z" }
+  ]
+}
+```
+
+El backend vuelve a validar Box Id, numero de parte, duplicados, linea y calidad. Despues registra la caja y sus piezas en MySQL dentro de una transaccion con indices unicos:
+
+| Tabla | Regla de unicidad |
+|---|---|
+| `aire_box_registry` | Un `box_code` no puede registrarse dos veces |
+| `aire_piece_registry` | Un `barcode` no puede registrarse en dos cajas |
+
+Las tablas se crean automaticamente al primer `Send` si el usuario de DB tiene permisos DDL. Si dos PCs envian el mismo Box Id o BarCode al mismo tiempo, solo una transaccion puede confirmar el registro; la otra recibe HTTP 409.
+
+Antes de habilitar el flujo en produccion se debe ejecutar una vez la migracion del historico:
+
+```powershell
+npm run backfill:boxing-registry
+```
+
+La migracion lee los archivos existentes en `BOX_DATA_PATH` y registra Box Id y BarCode con flujo `LEGACY`, evitando que una caja o pieza historica vuelva a registrarse.
 
 ## Validacion ICT
 
@@ -176,26 +209,23 @@ Con ese formato se buscan valores como el raw completo, `I20260910'004'00133` y 
 | Caso | Solicitud al backend | Respuesta backend | Mensaje en pantalla | Comportamiento de foco |
 |---|---|---|---|---|
 | Sin caja activa o sin piezas | No se envia request | No aplica | `Escanee al menos una pieza antes de enviar` | Foco vuelve al campo esperado |
-| Caja con piezas | `POST /api/scans/box/:boxCode/send` | HTTP 200 | `Archivo generado: <fileName>` | Limpia pantalla y foco vuelve a `Box Id` |
-| Backend no tiene piezas pendientes para esa caja | `POST /api/scans/box/:boxCode/send` | HTTP 400 | `No hay escaneos pendientes para esta caja` | Foco vuelve a `BarCode` |
+| Caja con piezas | `POST /api/scans/box/:boxCode/send` con `scans`, `productionType` y `lineCode` | HTTP 200 | `Archivo generado: <fileName>` | Limpia pantalla y foco vuelve a `Box Id` |
+| Backend no tiene piezas en el payload | `POST /api/scans/box/:boxCode/send` | HTTP 400 | `No hay escaneos pendientes para esta caja` | Foco vuelve a `BarCode` |
+| Box Id ya registrado | `POST /api/scans/box/:boxCode/send` | HTTP 409 | `El Box Id <box> ya fue registrado previamente` | Conserva la lista local para corregirla |
+| BarCode ya registrado | `POST /api/scans/box/:boxCode/send` | HTTP 409 | `El BarCode <barcode> ya fue registrado previamente en la caja <box>` | Conserva la lista local para corregirla |
 | `Box Id` invalido | `POST /api/scans/box/:boxCode/send` | HTTP 400 | `Formato de Box Id invalido` | Foco vuelve a `BarCode` |
 | Error escribiendo archivo BOX DATA | `POST /api/scans/box/:boxCode/send` | HTTP 500 | `Error al generar el archivo BOX` | Foco vuelve a `BarCode` |
 | Error de red/API | `POST /api/scans/box/:boxCode/send` | Sin respuesta HTTP valida | `Error de conexion: <detalle>` | Foco vuelve a `BarCode` |
 
 ## Delete 1 Item
 
-`Delete 1 Item` elimina una pieza pendiente de la caja activa antes de `Send`. No pide confirmacion.
+`Delete 1 Item` elimina una pieza de la lista local antes de `Send`. No pide confirmacion.
 
 | Caso | Accion del usuario | Solicitud al backend | Mensaje en pantalla | Comportamiento de foco |
 |---|---|---|---|---|
 | Sin fila seleccionada | Presionar boton deshabilitado | No aplica | Ninguno | Foco vuelve al campo esperado |
 | Seleccionar fila | Click en una fila de `Boxing List` | No se envia request | Ninguno | La fila queda resaltada y el foco vuelve a `BarCode` |
-| Presionar `Delete 1 Item` con fila seleccionada | Click en boton habilitado | `DELETE /api/scans/box/:boxCode/scan/:barcode` | Ninguno si elimina correctamente | Quita la fila, actualiza contadores y foco vuelve a `BarCode` |
-| Backend no tiene piezas para esa caja | Click en boton habilitado, pero backend ya no tiene la caja pendiente | HTTP 200 en backend actualizado o HTTP 404 en backend anterior | Ninguno | Limpia filas locales de esa caja y foco vuelve a `BarCode` |
-| Barcode no existe en la caja pendiente | Click en boton habilitado, pero el barcode no esta en backend | HTTP 200 en backend actualizado o HTTP 404 en backend anterior | Ninguno | Quita la fila local seleccionada y foco vuelve a `BarCode` |
-| Endpoint no desplegado en backend | El servidor devuelve HTML `Cannot DELETE ...` | HTTP 404 HTML | `El endpoint para eliminar no esta desplegado en el backend. Actualiza/reinicia el servidor.` | Foco vuelve a `BarCode` |
-| `Box Id` o `BarCode` invalido | Request de eliminacion con datos invalidos | HTTP 400 | Mensaje de validacion del backend | Foco vuelve a `BarCode` |
-| Error interno | Falla el backend al eliminar | HTTP 500 | `Error al eliminar el escaneo` | Foco vuelve a `BarCode` |
+| Presionar `Delete 1 Item` con fila seleccionada | Click en boton habilitado | No se envia request | Ninguno | Quita la fila local, actualiza contadores y foco vuelve a `BarCode` |
 
 ## Clear Screen
 
@@ -204,15 +234,16 @@ Con ese formato se buscan valores como el raw completo, `I20260910'004'00133` y 
 | Caso | Solicitud en pantalla | Accion backend | Mensaje en pantalla | Comportamiento de foco |
 |---|---|---|---|---|
 | No hay caja ni piezas | Ninguna | No se envia request | Ninguno | Foco vuelve a `Box Id` |
-| Caja activa sin filas visibles | Click en `Clear Screen` despues de desincronizacion local | `DELETE /api/scans/box/:boxCode` | Ninguno si limpia correctamente | Limpia pantalla y foco vuelve a `Box Id` |
+| Caja activa sin filas visibles | Click en `Clear Screen` | No se envia request | Ninguno | Limpia pantalla local y foco vuelve a `Box Id` |
 | Hay piezas escaneadas | Modal `Limpiar pantalla` con texto `Limpiar <N> piezas escaneadas? Esta accion no se puede deshacer.` | Espera decision del usuario | Ninguno | Autofoco se pausa mientras el modal esta abierto |
 | Usuario presiona `Cancelar` | Cierra modal | No limpia backend | Ninguno | Foco vuelve a `BarCode` |
-| Usuario presiona `Limpiar` | Cierra modal | `DELETE /api/scans/box/:boxCode` | Ninguno | Limpia pantalla y foco vuelve a `Box Id` |
-| Error al limpiar backend | `DELETE /api/scans/box/:boxCode` falla | La app muestra error | `Error al limpiar los escaneos pendientes de la caja` | Limpia pantalla local y foco vuelve a `Box Id` |
+| Usuario presiona `Limpiar` | Cierra modal | No se envia request | Ninguno | Limpia pantalla local y foco vuelve a `Box Id` |
 
 ## Respuestas Backend
 
 ### `POST /api/scans`
+
+La app cliente actual envia `validateOnly=true`. El endpoint valida el barcode y la calidad, pero no guarda un pendiente global; la persistencia ocurre en `Send`.
 
 | Validacion | HTTP | JSON |
 |---|---:|---|
@@ -240,7 +271,7 @@ Con ese formato se buscan valores como el raw completo, `I20260910'004'00133` y 
 
 | Validacion | HTTP | JSON |
 |---|---:|---|
-| Version compatible | 200 | `{ "version": "1.0.0", "requiredClientVersion": "1.0.0", "minimumClientVersion": "1.0.0" }` |
+| Version compatible | 200 | `{ "version": "1.0.2", "requiredClientVersion": "1.0.2", "minimumClientVersion": "1.0.2" }` |
 | Endpoint no disponible | 404 | La app muestra `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` |
 | Version incompatible | 200 con otra version requerida | La app muestra `Version incompatible. App <actual>, requerida <requerida>.` |
 
@@ -249,7 +280,11 @@ Con ese formato se buscan valores como el raw completo, `I20260910'004'00133` y 
 | Validacion | HTTP | JSON |
 |---|---:|---|
 | `Box ID` invalido | 400 | `{ "error": "Formato de Box Id invalido" }` |
-| Sin scans pendientes | 400 | `{ "error": "No hay escaneos pendientes para esta caja" }` |
+| Sin scans en el payload | 400 | `{ "error": "No hay escaneos pendientes para esta caja" }` |
+| Box Id ya registrado | 409 | `{ "error": "El Box Id <box> ya fue registrado previamente" }` |
+| BarCode ya registrado en otra caja | 409 | `{ "error": "El BarCode <barcode> ya fue registrado previamente en la caja <box>" }` |
+| Duplicado dentro del envio | 409 | `{ "error": "Este BarCode ya fue escaneado en esta caja: <barcode>" }` |
+| Calidad no valida en el segundo chequeo | 409 | Mensaje ICT/FCT o prueba electrica correspondiente |
 | Envio exitoso | 200 | `{ "success": true, "boxCode": "<box>", "file": { "name": "<archivo>", "path": "<ruta>", "rows": <n>, "lastScan": "<fecha>" } }` |
 | Error interno | 500 | `{ "error": "Error al generar el archivo BOX", "details": "<detalle>" }` |
 

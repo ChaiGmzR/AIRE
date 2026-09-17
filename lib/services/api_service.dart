@@ -34,6 +34,54 @@ class ApiService {
 
   static String get baseUrl => _baseUrl;
 
+  static String? validateBoxId(String value) {
+    final boxId = value.trim();
+    if (boxId.isEmpty) {
+      return 'El Box Id es requerido';
+    }
+
+    if (!RegExp(r'^[A-Z]{2,4}\d{10,15}$').hasMatch(boxId)) {
+      return 'Formato de Box Id invalido';
+    }
+
+    return null;
+  }
+
+  static String? validateBarcode(String value) {
+    final barcode = value.trim();
+    if (barcode.isEmpty) {
+      return 'El BarCode es requerido';
+    }
+
+    if (barcode.length < 11) {
+      return 'BarCode demasiado corto (minimo 11 caracteres)';
+    }
+
+    if (extractPartNumber(barcode) == null) {
+      return 'No se pudo extraer el numero de parte del BarCode';
+    }
+
+    return null;
+  }
+
+  static String? extractPartNumber(String value) {
+    final barcode = value.trim();
+    if (barcode.contains('ñ')) {
+      final segments = barcode.split('ñ');
+      for (final segment in segments) {
+        if (RegExp(r'^[A-Z]{3}\d{8}').hasMatch(segment)) {
+          return segment.substring(0, 11);
+        }
+      }
+
+      if (segments.length >= 3 && segments[2].length >= 11) {
+        return segments[2].substring(0, 11);
+      }
+    }
+
+    return barcode.length >= 11 ? barcode.substring(0, 11) : null;
+  }
+
   static Future<String?> _loadConfiguredBaseUrl(List<String> args) async {
     final argUrl = _getArgValue(args, '--api-base-url=');
     if (argUrl != null && argUrl.trim().isNotEmpty) {
@@ -235,6 +283,7 @@ class ApiService {
           'barcode': barcode,
           'productionType': productionType,
           'lineCode': lineCode,
+          'validateOnly': true,
         }),
       );
 
@@ -374,11 +423,21 @@ class ApiService {
   }
 
   /// Send a completed box and generate its BOX DATA file
-  static Future<SendBoxResult> sendBox(String boxCode) async {
+  static Future<SendBoxResult> sendBox({
+    required String boxCode,
+    required List<Map<String, dynamic>> scans,
+    required String productionType,
+    required String lineCode,
+  }) async {
     try {
       final response = await http.post(
         Uri.parse('$_baseUrl/api/scans/box/$boxCode/send'),
         headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'scans': scans,
+          'productionType': productionType,
+          'lineCode': lineCode,
+        }),
       );
 
       final data = _tryDecodeJsonObject(response.body);

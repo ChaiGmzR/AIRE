@@ -151,6 +151,13 @@ class _BoxingScreenState extends State<BoxingScreen> {
   Future<void> _onBoxIdSubmitted(String value) async {
     final boxId = value.trim();
     if (boxId.isNotEmpty) {
+      final validationError = ApiService.validateBoxId(boxId);
+      if (validationError != null) {
+        _showError(validationError);
+        _scheduleExpectedFocus();
+        return;
+      }
+
       boxIdController.value = TextEditingValue(
         text: boxId,
         selection: TextSelection.collapsed(offset: boxId.length),
@@ -162,19 +169,9 @@ class _BoxingScreenState extends State<BoxingScreen> {
         boxScans.clear();
         currentBoxCount = 0;
         currentPartNumber = null;
-        isProcessing = true;
+        isProcessing = false;
       });
-
-      try {
-        await _clearCurrentBoxFromBackend();
-      } finally {
-        if (mounted) {
-          setState(() {
-            isProcessing = false;
-          });
-        }
-        _scheduleExpectedFocus();
-      }
+      _scheduleExpectedFocus();
       return;
     }
 
@@ -182,7 +179,33 @@ class _BoxingScreenState extends State<BoxingScreen> {
   }
 
   Future<void> _onBarCodeSubmitted(String value) async {
-    if (value.trim().isEmpty || !boxIdLocked || isProcessing) {
+    final barcode = value.trim();
+    if (barcode.isEmpty || !boxIdLocked || isProcessing) {
+      _scheduleExpectedFocus();
+      return;
+    }
+
+    final validationError = ApiService.validateBarcode(barcode);
+    if (validationError != null) {
+      _showError(validationError);
+      barCodeController.clear();
+      _scheduleExpectedFocus();
+      return;
+    }
+
+    if (boxScans.any((scan) => scan.barCode == barcode)) {
+      _showError('Este BarCode ya fue escaneado en esta caja');
+      barCodeController.clear();
+      _scheduleExpectedFocus();
+      return;
+    }
+
+    final partNumber = ApiService.extractPartNumber(barcode)!;
+    if (currentPartNumber != null && currentPartNumber != partNumber) {
+      _showError(
+        'Numero de parte distinto. Esperado $currentPartNumber, recibido $partNumber',
+      );
+      barCodeController.clear();
       _scheduleExpectedFocus();
       return;
     }
@@ -194,7 +217,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
     try {
       final result = await ApiService.registerScan(
         boxCode: boxIdController.text.trim(),
-        barcode: value.trim(),
+        barcode: barcode,
         productionType: selectedProductionType,
         lineCode: selectedLineCode,
       );
@@ -203,9 +226,9 @@ class _BoxingScreenState extends State<BoxingScreen> {
       if (result.success) {
         // Add to local list
         setState(() {
-          currentBoxCount = result.boxCount ?? (currentBoxCount + 1);
+          currentBoxCount = boxScans.length + 1;
           shiftCount = result.shiftCount ?? shiftCount;
-          currentPartNumber = result.partNumber;
+          currentPartNumber = result.partNumber ?? partNumber;
           selectedRowIndex = null;
 
           boxScans.insert(
@@ -213,7 +236,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
             BoxScan(
               no: currentBoxCount,
               boxId: boxIdController.text.trim(),
-              barCode: result.serial ?? value.trim(),
+              barCode: result.serial ?? barcode,
+              partNumber: result.partNumber ?? partNumber,
               readTime: DateTime.now(),
             ),
           );
@@ -250,7 +274,19 @@ class _BoxingScreenState extends State<BoxingScreen> {
       isProcessing = true;
     });
 
-    final result = await ApiService.sendBox(boxIdController.text.trim());
+    final result = await ApiService.sendBox(
+      boxCode: boxIdController.text.trim(),
+      scans: boxScans
+          .map(
+            (scan) => <String, dynamic>{
+              'barcode': scan.barCode,
+              'firstScan': scan.readTime.toIso8601String(),
+            },
+          )
+          .toList(),
+      productionType: selectedProductionType,
+      lineCode: selectedLineCode,
+    );
     if (!mounted) return;
 
     setState(() {
@@ -308,10 +344,6 @@ class _BoxingScreenState extends State<BoxingScreen> {
         _scheduleExpectedFocus();
         return;
       }
-
-      await _clearCurrentBoxFromBackend();
-    } else if (boxIdController.text.isNotEmpty) {
-      await _clearCurrentBoxFromBackend();
     }
 
     _resetForm();
@@ -393,73 +425,15 @@ class _BoxingScreenState extends State<BoxingScreen> {
       return;
     }
 
-    final scan = boxScans[index];
     setState(() {
-      isProcessing = true;
-    });
-
-    final result = await ApiService.deleteBoxScan(
-      boxCode: scan.boxId,
-      barcode: scan.barCode,
-    );
-    if (!mounted) return;
-
-    if (result.success) {
-      setState(() {
-        _removeLocalScanAt(index, serverBoxCount: result.boxCount);
-        _applyDeleteCounts(result.boxCount, result.shiftCount);
-        currentPartNumber = boxScans.isEmpty
-            ? null
-            : result.partNumber ?? currentPartNumber;
-      });
-    } else if (_isBackendBoxAlreadyClear(result.error)) {
-      setState(() {
-        boxScans.clear();
-        selectedRowIndex = null;
-        currentBoxCount = 0;
-        shiftCount = 0;
-        currentPartNumber = null;
-      });
-    } else if (_isSelectedScanMissingOnBackend(result.error)) {
-      setState(() {
-        _removeLocalScanAt(index);
-        _applyDeleteCounts(null, null);
-        currentPartNumber = boxScans.isEmpty ? null : currentPartNumber;
-      });
-    } else {
-      _showError(result.error ?? 'Error al eliminar el escaneo');
-    }
-
-    setState(() {
-      isProcessing = false;
+      boxScans.removeAt(index);
+      boxScans = _renumberLocalScans(boxScans);
+      currentBoxCount = boxScans.length;
+      currentPartNumber = boxScans.isEmpty ? null : boxScans.first.partNumber;
+      shiftCount = boxScans.isEmpty ? 0 : shiftCount;
+      selectedRowIndex = null;
     });
     _scheduleExpectedFocus();
-  }
-
-  void _removeLocalScanAt(int index, {int? serverBoxCount}) {
-    if (serverBoxCount != null && serverBoxCount <= 0) {
-      boxScans.clear();
-    } else if (index >= 0 && index < boxScans.length) {
-      boxScans.removeAt(index);
-    }
-
-    boxScans = _renumberLocalScans(boxScans);
-    selectedRowIndex = null;
-  }
-
-  void _applyDeleteCounts(int? boxCount, int? updatedShiftCount) {
-    currentBoxCount = boxCount ?? boxScans.length;
-    shiftCount = boxScans.isEmpty ? 0 : updatedShiftCount ?? shiftCount;
-  }
-
-  bool _isBackendBoxAlreadyClear(String? error) {
-    return error == 'No pending scans for this box' ||
-        error == 'No hay escaneos pendientes para esta caja';
-  }
-
-  bool _isSelectedScanMissingOnBackend(String? error) {
-    return error == 'Barcode not found in this box' ||
-        error == 'BarCode no encontrado en esta caja';
   }
 
   List<BoxScan> _renumberLocalScans(List<BoxScan> scans) {
@@ -470,21 +444,10 @@ class _BoxingScreenState extends State<BoxingScreen> {
           no: total - index,
           boxId: scans[index].boxId,
           barCode: scans[index].barCode,
+          partNumber: scans[index].partNumber,
           readTime: scans[index].readTime,
         ),
     ];
-  }
-
-  Future<void> _clearCurrentBoxFromBackend({bool showError = true}) async {
-    final boxCode = boxIdController.text.trim();
-    if (boxCode.isEmpty) {
-      return;
-    }
-
-    final cleared = await ApiService.clearBoxScans(boxCode);
-    if (!cleared && mounted && showError) {
-      _showError('Error al limpiar los escaneos pendientes de la caja');
-    }
   }
 
   void _showError(String message) {
