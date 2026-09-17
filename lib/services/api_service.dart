@@ -466,16 +466,24 @@ class ApiService {
     }
   }
 
-  /// Validate client/backend version compatibility
+  /// Validate the client against the latest public GitHub release.
   static Future<VersionValidationResult> validateVersion({
     required String clientVersion,
   }) async {
     const invalidVersionMessage =
-        'No se pudo validar la version del backend. Actualiza/reinicia el servidor.';
+        'No se pudo comprobar la version en GitHub. Verifica la conexion a Internet.';
 
     try {
       final response = await http
-          .get(Uri.parse('$_baseUrl/api/version'))
+          .get(
+            Uri.parse(
+              'https://api.github.com/repos/ChaiGmzR/AIRE/releases/latest',
+            ),
+            headers: const {
+              'Accept': 'application/vnd.github+json',
+              'User-Agent': 'AIRE-Client',
+            },
+          )
           .timeout(const Duration(seconds: 5));
 
       if (response.statusCode != 200) {
@@ -493,39 +501,55 @@ class ApiService {
         );
       }
 
-      final serverVersion = _asString(data['version']);
-      final requiredClientVersion = _asString(data['requiredClientVersion']);
-      final minimumClientVersion = _asString(data['minimumClientVersion']);
-      final expectedClientVersion = requiredClientVersion.isNotEmpty
-          ? requiredClientVersion
-          : minimumClientVersion.isNotEmpty
-          ? minimumClientVersion
-          : serverVersion;
-
-      if (serverVersion.isEmpty || expectedClientVersion.isEmpty) {
+      final tagName = _asString(data['tag_name']);
+      final latestVersion = tagName.startsWith('v')
+          ? tagName.substring(1)
+          : tagName;
+      if (!RegExp(r'^\d+\.\d+\.\d+$').hasMatch(latestVersion)) {
         return VersionValidationResult(
           valid: false,
           message: invalidVersionMessage,
         );
       }
 
-      if (expectedClientVersion != clientVersion) {
+      if (_isNewerVersion(latestVersion, clientVersion)) {
         return VersionValidationResult(
           valid: false,
-          serverVersion: serverVersion,
-          requiredVersion: expectedClientVersion,
-          message:
-              'Version incompatible. App $clientVersion, requerida $expectedClientVersion.',
+          serverVersion: latestVersion,
+          requiredVersion: latestVersion,
+          message: 'Hay una nueva version disponible: $latestVersion.',
         );
       }
 
-      return VersionValidationResult(valid: true, serverVersion: serverVersion);
+      return VersionValidationResult(valid: true, serverVersion: latestVersion);
     } catch (_) {
       return VersionValidationResult(
         valid: false,
         message: invalidVersionMessage,
       );
     }
+  }
+
+  static bool _isNewerVersion(String candidate, String current) {
+    List<int> parse(String value) => value
+        .split('.')
+        .map((part) => int.tryParse(part) ?? 0)
+        .toList();
+
+    final candidateParts = parse(candidate);
+    final currentParts = parse(current);
+    for (var index = 0; index < 3; index++) {
+      final candidatePart = index < candidateParts.length
+          ? candidateParts[index]
+          : 0;
+      final currentPart = index < currentParts.length
+          ? currentParts[index]
+          : 0;
+      if (candidatePart != currentPart) {
+        return candidatePart > currentPart;
+      }
+    }
+    return false;
   }
 
   /// Get API status

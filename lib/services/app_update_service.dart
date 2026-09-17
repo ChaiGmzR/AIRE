@@ -8,7 +8,7 @@ class AppUpdateService {
 
     final installerUrl = Uri.parse(
       'https://github.com/ChaiGmzR/AIRE/releases/download/v$version/'
-      'pcb_boxing_system_${version}_installer.exe',
+      'AIRE_Setup_$version.exe',
     );
     final installerPath = _temporaryInstallerPath(version);
     final installerFile = File(installerPath);
@@ -34,7 +34,7 @@ class AppUpdateService {
 
       await Process.start(
         installerFile.path,
-        const <String>[],
+        const <String>['--update'],
         mode: ProcessStartMode.detached,
       );
       return installerFile.path;
@@ -46,6 +46,6 @@ class AppUpdateService {
   static String _temporaryInstallerPath(String version) {
     final separator = Platform.pathSeparator;
     return '${Directory.systemTemp.path}$separator'
-        'pcb_boxing_system_update_$version.exe';
+        'AIRE_Setup_update_$version.exe';
   }
 }
