@@ -513,6 +513,7 @@ class ApiService {
         return VersionValidationResult(
           valid: false,
           serverVersion: serverVersion,
+          requiredVersion: expectedClientVersion,
           message:
               'Version incompatible. App $clientVersion, requerida $expectedClientVersion.',
         );
@@ -658,10 +659,12 @@ class VersionValidationResult {
   final bool valid;
   final String message;
   final String? serverVersion;
+  final String? requiredVersion;
 
   VersionValidationResult({
     required this.valid,
     this.message = '',
     this.serverVersion,
+    this.requiredVersion,
   });
 }

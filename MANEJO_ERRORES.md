@@ -35,7 +35,10 @@ Nota: `Network` indica comunicacion con el backend. El detalle interno de DB/car
 |---|---|---|---|---|
 | App recien abierta | Ninguna | No aplica | Ninguno | Foco en `Box Id` |
 | Validacion de version correcta | Abrir app | `GET /api/version` | Ninguno | Foco en `Box Id` |
-| Backend sin endpoint de version o version incompatible | Abrir app | `GET /api/version` | `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` o `Version incompatible. App <actual>, requerida <requerida>.` | Foco en `Box Id` |
+| Backend sin endpoint de version | Abrir app | `GET /api/version` | `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` | Foco en `Box Id` |
+| Nueva version disponible | Abrir app con una version menor a la requerida | `GET /api/version`; al aceptar, descarga el instalador EXE de GitHub | Modal `Nueva version disponible` con `Actualizar ahora` | La app se cierra para que el instalador reinicie la version nueva |
+| Version instalada mayor que la requerida | Abrir app | `GET /api/version` | `Version incompatible. App <actual>, requerida <requerida>.` | Foco en `Box Id` |
+| Error al descargar actualizacion | Presionar `Actualizar ahora` | Descarga del instalador desde GitHub | `No se pudo descargar la actualizacion: <detalle>` | El modal permanece abierto para reintentar |
 | Cambio de tipo/linea | Seleccionar `MAIN PCB`/`DISPLAY` y linea antes de escanear caja | No se envia request | Ninguno | Foco vuelve a `Box Id` |
 | `Box Id` vacio | Enter en `Box Id` vacio | No se envia request | Ninguno | Foco permanece/vuelve a `Box Id` |
 | `Box Id` capturado | Enter despues de capturar `Box Id` | No se envia request | Ninguno | `Box Id` se bloquea, inicia lista local vacia y foco pasa a `BarCode` |
@@ -264,7 +267,7 @@ La app cliente actual envia `validateOnly=true`. El endpoint valida el barcode y
 
 | Validacion | HTTP | JSON |
 |---|---:|---|
-| Version compatible | 200 | `{ "version": "1.2.0", "requiredClientVersion": "1.2.0", "minimumClientVersion": "1.2.0" }` |
+| Version compatible | 200 | `{ "version": "1.2.1", "requiredClientVersion": "1.2.1", "minimumClientVersion": "1.2.1" }` |
 | Endpoint no disponible | 404 | La app muestra `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` |
 | Version incompatible | 200 con otra version requerida | La app muestra `Version incompatible. App <actual>, requerida <requerida>.` |
 

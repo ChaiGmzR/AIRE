@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import '../widgets/boxing_list_table.dart';
 import '../models/box_scan.dart';
 import '../services/api_service.dart';
 import '../services/app_settings_service.dart';
+import '../services/app_update_service.dart';
 
 class BoxingScreen extends StatefulWidget {
   const BoxingScreen({super.key});
@@ -101,8 +103,97 @@ class _BoxingScreenState extends State<BoxingScreen> {
       return;
     }
 
+    final requiredVersion = validation.requiredVersion;
+    if (requiredVersion != null &&
+        _isNewerVersion(requiredVersion, AppInfo.version)) {
+      await _showUpdateDialog(requiredVersion);
+      return;
+    }
+
     _showError(validation.message);
     _scheduleExpectedFocus();
+  }
+
+  Future<void> _showUpdateDialog(String requiredVersion) async {
+    var isDownloading = false;
+    String? updateError;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Nueva version disponible'),
+            content: Text(
+              isDownloading
+                  ? 'Descargando la version $requiredVersion...'
+                  : updateError ??
+                      'La version instalada es ${AppInfo.version}. '
+                          'Esta disponible la version $requiredVersion.',
+            ),
+            actions: [
+              if (!isDownloading)
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cerrar'),
+                ),
+              if (!isDownloading)
+                FilledButton(
+                  onPressed: () async {
+                    setDialogState(() {
+                      isDownloading = true;
+                      updateError = null;
+                    });
+
+                    try {
+                      await AppUpdateService.downloadAndLaunchInstaller(
+                        requiredVersion,
+                      );
+                      if (dialogContext.mounted) {
+                        Navigator.of(dialogContext).pop();
+                      }
+                      exit(0);
+                    } catch (error) {
+                      if (!dialogContext.mounted) return;
+                      setDialogState(() {
+                        isDownloading = false;
+                        updateError =
+                            'No se pudo descargar la actualizacion: $error';
+                      });
+                    }
+                  },
+                  child: const Text('Actualizar ahora'),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  bool _isNewerVersion(String candidate, String current) {
+    List<int> parse(String value) {
+      return value
+          .split('.')
+          .map((part) => int.tryParse(part) ?? 0)
+          .toList();
+    }
+
+    final candidateParts = parse(candidate);
+    final currentParts = parse(current);
+    for (var index = 0; index < 3; index++) {
+      final candidatePart = index < candidateParts.length
+          ? candidateParts[index]
+          : 0;
+      final currentPart = index < currentParts.length
+          ? currentParts[index]
+          : 0;
+      if (candidatePart != currentPart) {
+        return candidatePart > currentPart;
+      }
+    }
+    return false;
   }
 
   Future<void> _loadSavedProductionSelection() async {
