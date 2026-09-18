@@ -144,13 +144,21 @@ bool Win32Window::Create(const std::wstring& title,
     return false;
   }
 
+  // The operator can minimize or restore the window, but cannot close the
+  // station accidentally with the close button or Alt+F4.
+  HMENU system_menu = GetSystemMenu(window, FALSE);
+  if (system_menu != nullptr) {
+    DeleteMenu(system_menu, SC_CLOSE, MF_BYCOMMAND);
+    DrawMenuBar(window);
+  }
+
   UpdateTheme(window);
 
   return OnCreate();
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  return ShowWindow(window_handle_, SW_MAXIMIZE);
 }
 
 // static
@@ -179,6 +187,15 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    case WM_CLOSE:
+      return 0;
+
+    case WM_SYSCOMMAND:
+      if ((wparam & 0xFFF0) == SC_CLOSE) {
+        return 0;
+      }
+      break;
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();
