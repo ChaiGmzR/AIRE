@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <AssemblyName>AIRE_Setup_1.2.3</AssemblyName>
+    <AssemblyTitle>AIRE Setup</AssemblyTitle>
+    <Description>Instalador de Ilsan Packing System</Description>
+    <Company>Ilsan</Company>
+    <Product>Ilsan Packing System</Product>
+    <Version>1.2.3</Version>
+    <FileVersion>1.2.3.0</FileVersion>
+    <AssemblyVersion>1.2.3.0</AssemblyVersion>
+    <ApplicationIcon>app_icon.ico</ApplicationIcon>
+    <RootNamespace>IlsanPackingInstaller</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="AIRE_1.2.3_windows.zip" LogicalName="AIRE_1.2.3_windows.zip" />
+    <None Include="app_icon.ico" />
+  </ItemGroup>
+</Project>

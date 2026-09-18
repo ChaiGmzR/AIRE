@@ -4,7 +4,7 @@ Esta guia describe el procedimiento para publicar una version distribuible de AI
 
 ## Reglas de version
 
-- La version debe usar formato `MAJOR.MINOR.PATCH`, por ejemplo `1.2.2`.
+- La version debe usar formato `MAJOR.MINOR.PATCH`, por ejemplo `1.2.3`.
 - La app cliente consulta directamente el release mas reciente de GitHub para detectar actualizaciones.
 - La version del backend no se usa para validar la version del cliente.
 - El `build-number` de Flutter debe incrementarse en cada compilacion de Windows.
@@ -27,8 +27,8 @@ El repositorio de la app es `ChaiGmzR/AIRE`. El repositorio del backend es `Chai
 
 En la app cliente actualizar:
 
-- `pubspec.yaml`: `version: 1.2.2+6`
-- `lib/app_info.dart`: version por defecto `1.2.2`
+- `pubspec.yaml`: `version: 1.2.3+7`
+- `lib/app_info.dart`: version por defecto `1.2.3`
 
 En el backend actualizar:
 
@@ -54,7 +54,7 @@ npm ci --dry-run --ignore-scripts
 ## Compilar el cliente
 
 ```powershell
-flutter build windows --release --build-name=1.2.2 --build-number=6
+flutter build windows --release --build-name=1.2.3 --build-number=7
 ```
 
 La salida queda en:
@@ -70,7 +70,7 @@ El ZIP debe contener el contenido de `Release`, incluyendo `pcb_boxing_system.ex
 ```powershell
 Compress-Archive `
   -Path build/windows/x64/runner/Release/* `
-  -DestinationPath release/AIRE_1.2.2_windows.zip `
+  -DestinationPath release/AIRE_1.2.3_windows.zip `
   -CompressionLevel Optimal `
   -Force
 ```
@@ -93,7 +93,7 @@ El proyecto usa `WinExe`, por lo que no abre una ventana de consola. La instalac
 El proyecto del instalador debe incluir como recurso el ZIP de la misma version. Publicar con:
 
 ```powershell
-dotnet publish release/installer_1_2_2/Installer.csproj `
+dotnet publish release/installer_1_2_3/Installer.csproj `
   --configuration Release `
   --self-contained true `
   --runtime win-x64 `
@@ -103,7 +103,7 @@ dotnet publish release/installer_1_2_2/Installer.csproj `
 Copiar el resultado como:
 
 ```text
-release/AIRE_Setup_1.2.2.exe
+release/AIRE_Setup_1.2.3.exe
 ```
 
 ## Verificar antes de publicar
@@ -114,7 +114,7 @@ release/AIRE_Setup_1.2.2.exe
 - El acceso directo del Escritorio se crea correctamente.
 - El acceso directo del Menu Inicio se crea correctamente.
 - El icono corresponde a `ImagenLogo1.png` convertido a `app_icon.ico`.
-- La app muestra `v1.2.2`.
+- La app muestra `v1.2.3`.
 - La API de GitHub publica el tag del release antes de distribuir la app.
 
 ## Commit y tag
@@ -123,15 +123,15 @@ Publicar primero los cambios del backend y del cliente:
 
 ```powershell
 git add .
-git commit -m "Preparar instalador grafico AIRE 1.2.2"
+git commit -m "Corregir cierre del instalador AIRE 1.2.3"
 git push origin main
 ```
 
 Crear el tag de la app:
 
 ```powershell
-git tag -a v1.2.2 -m "AIRE 1.2.2"
-git push origin v1.2.2
+git tag -a v1.2.3 -m "AIRE 1.2.3"
+git push origin v1.2.3
 ```
 
 ## Crear el release
@@ -139,31 +139,31 @@ git push origin v1.2.2
 Desde el repositorio de la app:
 
 ```powershell
-gh release create v1.2.2 `
-  release/AIRE_Setup_1.2.2.exe `
-  release/AIRE_1.2.2_windows.zip `
+gh release create v1.2.3 `
+  release/AIRE_Setup_1.2.3.exe `
+  release/AIRE_1.2.3_windows.zip `
   --repo ChaiGmzR/AIRE `
-  --title "AIRE 1.2.2" `
-  --notes-file RELEASE_NOTES_1.2.2.md
+  --title "AIRE 1.2.3" `
+  --notes-file RELEASE_NOTES_1.2.3.md
 ```
 
 El release debe contener como minimo:
 
-- `AIRE_Setup_1.2.2.exe`
-- `AIRE_1.2.2_windows.zip`
+- `AIRE_Setup_1.2.3.exe`
+- `AIRE_1.2.3_windows.zip`
 
 ## Verificar el release publicado
 
 ```powershell
-gh release view v1.2.2 --repo ChaiGmzR/AIRE
-gh release verify-asset v1.2.2 release/AIRE_Setup_1.2.2.exe --repo ChaiGmzR/AIRE
+gh release view v1.2.3 --repo ChaiGmzR/AIRE
+gh release verify-asset v1.2.3 release/AIRE_Setup_1.2.3.exe --repo ChaiGmzR/AIRE
 ```
 
 Tambien se pueden comprobar las descargas directas:
 
 ```text
-https://github.com/ChaiGmzR/AIRE/releases/download/v1.2.2/AIRE_Setup_1.2.2.exe
-https://github.com/ChaiGmzR/AIRE/releases/download/v1.2.2/AIRE_1.2.2_windows.zip
+https://github.com/ChaiGmzR/AIRE/releases/download/v1.2.3/AIRE_Setup_1.2.3.exe
+https://github.com/ChaiGmzR/AIRE/releases/download/v1.2.3/AIRE_1.2.3_windows.zip
 ```
 
 ## Actualizacion automatica
