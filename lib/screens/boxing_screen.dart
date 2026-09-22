@@ -276,7 +276,10 @@ class _BoxingScreenState extends State<BoxingScreen> {
       return;
     }
 
-    final validationError = ApiService.validateBarcode(barcode);
+    final validationError = ApiService.validateBarcode(
+      barcode,
+      productionType: selectedProductionType,
+    );
     if (validationError != null) {
       _showError(validationError);
       barCodeController.clear();
@@ -284,7 +287,10 @@ class _BoxingScreenState extends State<BoxingScreen> {
       return;
     }
 
-    if (boxScans.any((scan) => scan.barCode == barcode)) {
+    final barcodeKey = ApiService.barcodeComparisonKey(barcode);
+    if (boxScans.any(
+      (scan) => ApiService.barcodeComparisonKey(scan.barCode) == barcodeKey,
+    )) {
       _showError('Este BarCode ya fue escaneado en esta caja');
       barCodeController.clear();
       _scheduleExpectedFocus();
@@ -292,7 +298,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
     }
 
     final partNumber = ApiService.extractPartNumber(barcode)!;
-    if (currentPartNumber != null && currentPartNumber != partNumber) {
+    if (currentPartNumber != null &&
+        currentPartNumber!.toUpperCase() != partNumber.toUpperCase()) {
       _showError(
         'Numero de parte distinto. Esperado $currentPartNumber, recibido $partNumber',
       );

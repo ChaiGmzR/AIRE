@@ -47,39 +47,101 @@ class ApiService {
     return null;
   }
 
-  static String? validateBarcode(String value) {
+  static String? validateBarcode(String value, {String? productionType}) {
     final barcode = value.trim();
     if (barcode.isEmpty) {
       return 'El BarCode es requerido';
     }
 
-    if (barcode.length < 11) {
-      return 'BarCode demasiado corto (minimo 11 caracteres)';
+    final parsed = parseBarcode(barcode);
+    if (parsed == null) {
+      if (barcode.length < 11) {
+        return 'BarCode demasiado corto (minimo 11 caracteres)';
+      }
+
+      return 'Formato de BarCode no reconocido';
     }
 
-    if (extractPartNumber(barcode) == null) {
-      return 'No se pudo extraer el numero de parte del BarCode';
+    if (productionType == 'MAIN_PCB' && parsed.isSmdQr) {
+      return 'MAIN PCB solo acepta Barcode de produccion';
+    }
+
+    if (parsed.partNumber.isEmpty) {
+      return 'BarCode demasiado corto (minimo 11 caracteres)';
     }
 
     return null;
   }
 
-  static String? extractPartNumber(String value) {
+  static BarcodeInfo? parseBarcode(String value) {
     final barcode = value.trim();
-    if (barcode.contains('ñ')) {
-      final segments = barcode.split('ñ');
-      for (final segment in segments) {
-        if (RegExp(r'^[A-Z]{3}\d{8}').hasMatch(segment)) {
-          return segment.substring(0, 11);
-        }
-      }
-
-      if (segments.length >= 3 && segments[2].length >= 11) {
-        return segments[2].substring(0, 11);
-      }
+    if (barcode.isEmpty) {
+      return null;
     }
 
-    return barcode.length >= 11 ? barcode.substring(0, 11) : null;
+    final smdQr = _parseSmdQr(barcode);
+    if (smdQr != null) {
+      return smdQr;
+    }
+
+    if (barcode.startsWith('I') &&
+        (barcode.contains('ñ') || barcode.contains(';'))) {
+      return null;
+    }
+
+    if (barcode.length < 11) {
+      return null;
+    }
+
+    return BarcodeInfo(
+      value: barcode,
+      partNumber: barcode.substring(0, 11),
+      isSmdQr: false,
+      comparisonKey: barcode.toUpperCase(),
+    );
+  }
+
+  static String? extractPartNumber(String value) {
+    return parseBarcode(value)?.partNumber;
+  }
+
+  static String barcodeComparisonKey(String value) {
+    final parsed = parseBarcode(value);
+    return parsed?.comparisonKey ?? value.trim().toUpperCase();
+  }
+
+  static BarcodeInfo? _parseSmdQr(String value) {
+    if (!value.startsWith('I') ||
+        (!value.contains('ñ') && !value.contains(';'))) {
+      return null;
+    }
+
+    final fields = value.split(RegExp(r'[ñ;]'));
+    while (fields.isNotEmpty && fields.last.isEmpty) {
+      fields.removeLast();
+    }
+
+    if (fields.length != 4 || fields[1].toUpperCase() != 'MAIN') {
+      return null;
+    }
+
+    final header = fields[0].split(RegExp(r"[-'’]"));
+    if (header.length != 3 ||
+        !RegExp(r'^I\d{8}$').hasMatch(header[0]) ||
+        header[1].isEmpty ||
+        !RegExp(r'^\d+$').hasMatch(header[2]) ||
+        fields[2].isEmpty ||
+        fields[3].isEmpty) {
+      return null;
+    }
+
+    final normalized = '${header.join('-')};${fields.sublist(1).join(';')};';
+    return BarcodeInfo(
+      value: normalized,
+      partNumber: fields[2],
+      isSmdQr: true,
+      comparisonKey: normalized,
+    );
   }
 
   static Future<String?> _loadConfiguredBaseUrl(List<String> args) async {
@@ -598,6 +660,20 @@ class ApiService {
   static String _asString(Object? value) {
     return value?.toString() ?? '';
   }
+}
+
+class BarcodeInfo {
+  final String value;
+  final String partNumber;
+  final bool isSmdQr;
+  final String comparisonKey;
+
+  const BarcodeInfo({
+    required this.value,
+    required this.partNumber,
+    required this.isSmdQr,
+    required this.comparisonKey,
+  });
 }
 
 class ScanResult {
