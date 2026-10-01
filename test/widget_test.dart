@@ -23,8 +23,7 @@ void main() {
   test('normalizes both SMD QR separator formats to the same value', () {
     const qrWithN =
         'I20240110\u20190052\u201900608\u00f1MAIN\u00f1EBR80757421\u00f11\u00f1';
-    const qrWithSemicolons =
-        'I20240110-0052-00608;MAIN;EBR80757421;1;';
+    const qrWithSemicolons = 'I20240110-0052-00608;MAIN;EBR80757421;1;';
 
     final first = ApiService.parseBarcode(qrWithN);
     final second = ApiService.parseBarcode(qrWithSemicolons);
@@ -33,6 +32,13 @@ void main() {
     expect(first?.partNumber, 'EBR80757421');
     expect(first?.value, qrWithSemicolons);
     expect(first?.comparisonKey, second?.comparisonKey);
+  });
+
+  test('normalizes Box Id independently of Caps Lock', () {
+    const lowerCaseBoxId = 'lgb922609094881';
+
+    expect(ApiService.normalizeBoxId(lowerCaseBoxId), 'LGB922609094881');
+    expect(ApiService.validateBoxId(lowerCaseBoxId), isNull);
   });
 
   test('keeps production barcode parsing independent from SMD QR parsing', () {

@@ -34,8 +34,10 @@ class ApiService {
 
   static String get baseUrl => _baseUrl;
 
+  static String normalizeBoxId(String value) => value.trim().toUpperCase();
+
   static String? validateBoxId(String value) {
-    final boxId = value.trim();
+    final boxId = normalizeBoxId(value);
     if (boxId.isEmpty) {
       return 'El Box Id es requerido';
     }
@@ -397,6 +399,41 @@ class ApiService {
     }
   }
 
+  static Future<HourlyCountsResult?> getHourlyCounts({
+    required String productionType,
+    required String lineCode,
+  }) async {
+    try {
+      final uri = Uri.parse('$_baseUrl/api/scans/hourly').replace(
+        queryParameters: {
+          'productionType': productionType,
+          'lineCode': lineCode,
+        },
+      );
+      final response = await http.get(uri);
+
+      if (response.statusCode != 200) {
+        return null;
+      }
+
+      final data = _tryDecodeJsonObject(response.body);
+      final intervals = data?['intervals'];
+      if (intervals is! List) {
+        return null;
+      }
+
+      return HourlyCountsResult(
+        shift: _asString(data?['shift']),
+        intervals: intervals
+            .whereType<Map>()
+            .map(HourlyCount.fromJson)
+            .toList(),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Get all scans for a box
   static Future<List<BoxScanItem>> getBoxScans(String boxCode) async {
     try {
@@ -593,10 +630,8 @@ class ApiService {
   }
 
   static bool _isNewerVersion(String candidate, String current) {
-    List<int> parse(String value) => value
-        .split('.')
-        .map((part) => int.tryParse(part) ?? 0)
-        .toList();
+    List<int> parse(String value) =>
+        value.split('.').map((part) => int.tryParse(part) ?? 0).toList();
 
     final candidateParts = parse(candidate);
     final currentParts = parse(current);
@@ -604,9 +639,7 @@ class ApiService {
       final candidatePart = index < candidateParts.length
           ? candidateParts[index]
           : 0;
-      final currentPart = index < currentParts.length
-          ? currentParts[index]
-          : 0;
+      final currentPart = index < currentParts.length ? currentParts[index] : 0;
       if (candidatePart != currentPart) {
         return candidatePart > currentPart;
       }
@@ -712,6 +745,47 @@ class BoxScanItem {
     required this.partNumber,
     required this.firstScan,
   });
+}
+
+class HourlyCountsResult {
+  final String shift;
+  final List<HourlyCount> intervals;
+
+  HourlyCountsResult({required this.shift, required this.intervals});
+}
+
+class HourlyCount {
+  final String label;
+  final DateTime start;
+  final DateTime end;
+  final int count;
+
+  HourlyCount({
+    required this.label,
+    required this.start,
+    required this.end,
+    required this.count,
+  });
+
+  factory HourlyCount.fromJson(Map value) {
+    final start = DateTime.tryParse(_stringValue(value['start']))?.toLocal();
+    final end = DateTime.tryParse(_stringValue(value['end']))?.toLocal();
+    final fallback = DateTime.now();
+
+    return HourlyCount(
+      label: _stringValue(value['label']),
+      start: start ?? fallback,
+      end: end ?? fallback,
+      count: _intValue(value['count']),
+    );
+  }
+
+  static String _stringValue(dynamic value) => value?.toString() ?? '';
+
+  static int _intValue(dynamic value) {
+    if (value is int) return value;
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
 }
 
 class DeleteScanResult {

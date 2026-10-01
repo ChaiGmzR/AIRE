@@ -17,6 +17,8 @@ La tabla `box_scans` almacena los registros de escaneos de cajas/PCBs en el proc
 | `source_file` | `VARCHAR(255)` | NO | - | Nombre del archivo fuente de donde se extrajo el registro |
 | `folder_date` | `DATE` | NO | - | Fecha de la carpeta contenedora (formato ISO) |
 | `created_at` | `TIMESTAMP` | NO | CURRENT_TIMESTAMP | Fecha de creación del registro |
+| `production_type` | `VARCHAR(16)` | YES | `NULL` | Flujo de producción (`MAIN_PCB` o `DISPLAY`) |
+| `line_code` | `VARCHAR(4)` | YES | `NULL` | Línea seleccionada (`M1`-`M4` o `D1`-`D3`) |
 
 ---
 
@@ -97,14 +99,25 @@ CREATE TABLE IF NOT EXISTS box_scans (
   last_scan      DATETIME     NOT NULL,
   source_file    VARCHAR(255) NOT NULL,
   folder_date    DATE         NOT NULL,
+  production_type VARCHAR(16) NULL,
+  line_code      VARCHAR(4)   NULL,
   created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uk_serial_box_time (serial, box_code, first_scan),
   KEY idx_box_time (box_code, first_scan),
   KEY idx_folder_date (folder_date),
-  KEY idx_serial (serial)
+  KEY idx_serial (serial),
+  KEY idx_scope_time (production_type, line_code, first_scan)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
+
+## Migración para HxH
+
+Las columnas de alcance son nullable para conservar los registros históricos
+generados por la aplicación anterior. Esos registros no pueden asignarse
+retroactivamente a una línea o flujo. Ejecuta una sola vez el script
+`AIRE_API_SERVER/sql/20261001_add_box_scan_scope.sql` antes de habilitar la
+consulta HxH persistente.
 
 ---
 

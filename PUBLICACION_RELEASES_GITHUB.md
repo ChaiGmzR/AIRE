@@ -87,8 +87,9 @@ El instalador es un wizard grafico autocontenido con .NET y debe:
 6. Registrar la aplicacion en `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall`.
 7. Incluir un desinstalador funcional en la entrada de Windows.
 8. Iniciar la app al terminar.
+9. Registrar `pcb_boxing_system.exe` directamente en `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`.
 
-El proyecto usa `WinExe`, por lo que no abre una ventana de consola. La instalacion manual muestra el wizard; el modo `--update` se ejecuta sin interfaz para las actualizaciones automaticas.
+El proyecto usa `WinExe`, por lo que no abre una ventana de consola. La instalacion manual muestra el wizard; el modo `--update` se ejecuta sin interfaz para las actualizaciones automaticas. No se debe iniciar ningun watchdog ni reiniciar la app despues de que el usuario la cierre.
 
 El proyecto del instalador debe incluir como recurso el ZIP de la misma version. Publicar con:
 
@@ -114,6 +115,8 @@ release/AIRE_Setup_1.2.4.exe
 - El acceso directo del Escritorio se crea correctamente.
 - El acceso directo del Menu Inicio se crea correctamente.
 - El icono corresponde a `ImagenLogo1.png` convertido a `app_icon.ico`.
+- La entrada de inicio automatico apunta directamente a `pcb_boxing_system.exe`.
+- Al cerrar la app, no vuelve a iniciarse automaticamente.
 - La app muestra `v1.2.4`.
 - La API de GitHub publica el tag del release antes de distribuir la app.
 

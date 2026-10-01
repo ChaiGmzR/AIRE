@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -45,6 +46,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
   bool isProcessing = false;
   bool _suspendAutoFocus = false;
   bool _focusScheduled = false;
+  Timer? _hourlyRefreshTimer;
 
   int currentBoxCount = 0;
   int shiftCount = 0;
@@ -54,6 +56,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
   String selectedLineCode = 'M1';
 
   List<BoxScan> boxScans = [];
+  List<HourlyCount> hourlyCounts = [];
 
   List<String> get _availableLineCodes {
     return _lineCodesByProductionType[selectedProductionType] ??
@@ -67,6 +70,11 @@ class _BoxingScreenState extends State<BoxingScreen> {
     barCodeFocusNode.addListener(_handleFocusChange);
     unawaited(_loadSavedProductionSelection());
     _checkApiConnection();
+    unawaited(_refreshHourlyCounts());
+    _hourlyRefreshTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(_refreshHourlyCounts()),
+    );
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scheduleExpectedFocus();
@@ -76,6 +84,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
   @override
   void dispose() {
+    _hourlyRefreshTimer?.cancel();
     boxIdFocusNode.removeListener(_handleFocusChange);
     barCodeFocusNode.removeListener(_handleFocusChange);
     boxIdController.dispose();
@@ -93,6 +102,18 @@ class _BoxingScreenState extends State<BoxingScreen> {
       networkConnected = status.connected;
     });
     _scheduleExpectedFocus();
+  }
+
+  Future<void> _refreshHourlyCounts() async {
+    final result = await ApiService.getHourlyCounts(
+      productionType: selectedProductionType,
+      lineCode: selectedLineCode,
+    );
+    if (!mounted || result == null) return;
+
+    setState(() {
+      hourlyCounts = result.intervals;
+    });
   }
 
   Future<void> _validateAppVersion() async {
@@ -129,8 +150,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
               isDownloading
                   ? 'Descargando la version $requiredVersion...'
                   : updateError ??
-                      'La version instalada es ${AppInfo.version}. '
-                          'Esta disponible la version $requiredVersion.',
+                        'La version instalada es ${AppInfo.version}. '
+                            'Esta disponible la version $requiredVersion.',
             ),
             actions: [
               if (!isDownloading)
@@ -174,10 +195,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
   bool _isNewerVersion(String candidate, String current) {
     List<int> parse(String value) {
-      return value
-          .split('.')
-          .map((part) => int.tryParse(part) ?? 0)
-          .toList();
+      return value.split('.').map((part) => int.tryParse(part) ?? 0).toList();
     }
 
     final candidateParts = parse(candidate);
@@ -186,9 +204,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
       final candidatePart = index < candidateParts.length
           ? candidateParts[index]
           : 0;
-      final currentPart = index < currentParts.length
-          ? currentParts[index]
-          : 0;
+      final currentPart = index < currentParts.length ? currentParts[index] : 0;
       if (candidatePart != currentPart) {
         return candidatePart > currentPart;
       }
@@ -205,6 +221,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
     setState(() {
       _setProductionSelection(settings.productionType, settings.lineCode);
     });
+    unawaited(_refreshHourlyCounts());
     _scheduleExpectedFocus();
   }
 
@@ -240,7 +257,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
   }
 
   Future<void> _onBoxIdSubmitted(String value) async {
-    final boxId = value.trim();
+    final boxId = ApiService.normalizeBoxId(value);
     if (boxId.isNotEmpty) {
       final validationError = ApiService.validateBoxId(boxId);
       if (validationError != null) {
@@ -341,6 +358,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
           );
         });
 
+        unawaited(_refreshHourlyCounts());
+
         // Clear barcode field and keep focus
         barCodeController.clear();
       } else {
@@ -394,6 +413,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
     if (result.success) {
       final fileName = result.fileName ?? 'archivo BOX';
       _resetForm();
+      unawaited(_refreshHourlyCounts());
       _showSuccess('Archivo generado: $fileName');
     } else {
       _showError(result.error ?? 'Error al generar el archivo BOX');
@@ -477,6 +497,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
       _setProductionSelection(value, _lineCodesByProductionType[value]!.first);
     });
     unawaited(_saveProductionSelection());
+    unawaited(_refreshHourlyCounts());
     _scheduleExpectedFocus();
   }
 
@@ -490,6 +511,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
       _setProductionSelection(selectedProductionType, value);
     });
     unawaited(_saveProductionSelection());
+    unawaited(_refreshHourlyCounts());
     _scheduleExpectedFocus();
   }
 
@@ -714,6 +736,179 @@ class _BoxingScreenState extends State<BoxingScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: Colors.grey.shade400),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildHourlyTable(),
+          const Expanded(child: SizedBox()),
+        ],
+      ),
+    );
+  }
+
+  List<HourlyCount> _displayHourlyCounts() {
+    final buckets = hourlyCounts.isNotEmpty
+        ? hourlyCounts
+        : _buildLocalHourlyBuckets();
+    final counts = buckets.map((bucket) => bucket.count).toList();
+
+    for (final scan in boxScans) {
+      for (var index = 0; index < buckets.length; index++) {
+        final bucket = buckets[index];
+        if (!scan.readTime.isBefore(bucket.start) &&
+            scan.readTime.isBefore(bucket.end)) {
+          counts[index]++;
+          break;
+        }
+      }
+    }
+
+    return [
+      for (var index = 0; index < buckets.length; index++)
+        HourlyCount(
+          label: buckets[index].label,
+          start: buckets[index].start,
+          end: buckets[index].end,
+          count: counts[index],
+        ),
+    ];
+  }
+
+  List<HourlyCount> _buildLocalHourlyBuckets() {
+    final now = DateTime.now();
+    final minutes = now.hour * 60 + now.minute;
+    DateTime start;
+    DateTime end;
+
+    if (minutes >= 7 * 60 + 30 && minutes < 17 * 60 + 30) {
+      start = DateTime(now.year, now.month, now.day, 7, 30);
+      end = DateTime(now.year, now.month, now.day, 17, 30);
+    } else if (minutes >= 17 * 60 + 30 && minutes < 22 * 60 + 30) {
+      start = DateTime(now.year, now.month, now.day, 17, 30);
+      end = DateTime(now.year, now.month, now.day, 22, 30);
+    } else if (minutes < 7 * 60 + 30) {
+      start = DateTime(now.year, now.month, now.day - 1, 22, 30);
+      end = DateTime(now.year, now.month, now.day, 7, 30);
+    } else {
+      start = DateTime(now.year, now.month, now.day, 22, 30);
+      end = DateTime(now.year, now.month, now.day + 1, 7, 30);
+    }
+
+    final buckets = <HourlyCount>[];
+    var cursor = start;
+    while (cursor.isBefore(end)) {
+      final next = DateTime.fromMillisecondsSinceEpoch(
+        math.min(
+          cursor.millisecondsSinceEpoch +
+              const Duration(hours: 1).inMilliseconds,
+          end.millisecondsSinceEpoch,
+        ),
+      );
+      buckets.add(
+        HourlyCount(
+          label: '${_formatClock(cursor)}-${_formatClock(next)}',
+          start: cursor,
+          end: next,
+          count: 0,
+        ),
+      );
+      cursor = next;
+    }
+    return buckets;
+  }
+
+  String _formatClock(DateTime value) {
+    final hour = value.hour.toString().padLeft(2, '0');
+    final minute = value.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  Widget _buildHourlyTable() {
+    final buckets = _displayHourlyCounts();
+
+    return Container(
+      color: const Color(0xFFE0E0E0),
+      padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tableWidth = math.max(
+            constraints.maxWidth,
+            buckets.length * 72.0,
+          );
+
+          return SizedBox(
+            width: constraints.maxWidth,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: tableWidth,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'HxH',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Container(
+                      color: const Color(0xFF2C3E50),
+                      height: 28,
+                      child: Row(
+                        children: [
+                          for (final bucket in buckets)
+                            Expanded(
+                              child: _buildHourlyCell(
+                                bucket.label,
+                                isHeader: true,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      color: Colors.white,
+                      height: 28,
+                      child: Row(
+                        children: [
+                          for (final bucket in buckets)
+                            Expanded(
+                              child: _buildHourlyCell(bucket.count.toString()),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHourlyCell(String text, {bool isHeader = false}) {
+    return Container(
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: isHeader ? Colors.white24 : Colors.grey.shade300,
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: isHeader ? 9 : 12,
+          fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
+          color: isHeader ? Colors.white : Colors.black,
+        ),
       ),
     );
   }
