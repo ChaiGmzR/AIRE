@@ -10,7 +10,7 @@ Este documento describe los casos de validacion del sistema de empaque AIRE, el 
 4. Para `MAIN PCB`, las lineas validas son `M1`, `M2`, `M3`, `M4`.
 5. Para `DISPLAY`, las lineas validas son `D1`, `D2`, `D3`.
 6. La seleccion de flujo y linea se guarda localmente en `%APPDATA%\IlsanPackingSystem\settings.json`.
-7. Al abrir la app se valida la version contra `GET /api/version`.
+7. Al abrir la app se valida la version contra `GET /api/updates/latest`.
 8. Despues de escanear `Box Id`, el campo queda bloqueado, la app inicia una lista local vacia y el foco pasa a `BarCode`.
 9. Mientras la caja esta activa, el foco siempre vuelve a `BarCode` despues de cada scan, error o validacion.
 10. `Send` envia directo, sin confirmacion.
@@ -34,11 +34,11 @@ Nota: `Network` indica comunicacion con el backend. El detalle interno de DB/car
 | Caso | Accion del usuario | Solicitud al backend | Mensaje en pantalla | Comportamiento de foco |
 |---|---|---|---|---|
 | App recien abierta | Ninguna | No aplica | Ninguno | Foco en `Box Id` |
-| Validacion de version correcta | Abrir app | `GET /api/version` | Ninguno | Foco en `Box Id` |
-| Backend sin endpoint de version | Abrir app | `GET /api/version` | `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` | Foco en `Box Id` |
-| Nueva version disponible | Abrir app con una version menor a la requerida | `GET /api/version`; al aceptar, descarga el instalador EXE de GitHub | Modal `Nueva version disponible` con `Actualizar ahora` | La app se cierra para que el instalador reinicie la version nueva |
-| Version instalada mayor que la requerida | Abrir app | `GET /api/version` | `Version incompatible. App <actual>, requerida <requerida>.` | Foco en `Box Id` |
-| Error al descargar actualizacion | Presionar `Actualizar ahora` | Descarga del instalador desde GitHub | `No se pudo descargar la actualizacion: <detalle>` | El modal permanece abierto para reintentar |
+| Validacion de version correcta | Abrir app | `GET /api/updates/latest` | Ninguno | Foco en `Box Id` |
+| Recurso de actualizaciones no disponible | Abrir app sin acceso al recurso compartido | `GET /api/updates/latest` responde `503` | `No se pudo comprobar la version en el recurso de actualizaciones.` | La app permanece en la version instalada |
+| Nueva version disponible | Abrir app con una version menor a la requerida | `GET /api/updates/latest`; al aceptar, descarga el instalador desde el backend | Modal `Nueva version disponible` con `Actualizar ahora` | La app se cierra para que el instalador reinicie la version nueva |
+| Version instalada mayor o igual a la disponible | Abrir app | `GET /api/updates/latest` | Ninguno | Foco en `Box Id` |
+| Error al descargar actualizacion | Presionar `Actualizar ahora` | `GET /api/updates/download/<version>` | `No se pudo descargar la actualizacion: <detalle>` | El modal permanece abierto para reintentar |
 | Cambio de tipo/linea | Seleccionar `MAIN PCB`/`DISPLAY` y linea antes de escanear caja | No se envia request | Ninguno | Foco vuelve a `Box Id` |
 | `Box Id` vacio | Enter en `Box Id` vacio | No se envia request | Ninguno | Foco permanece/vuelve a `Box Id` |
 | `Box Id` capturado | Enter despues de capturar `Box Id` | No se envia request | Ninguno | `Box Id` se bloquea, inicia lista local vacia y foco pasa a `BarCode` |
@@ -263,13 +263,22 @@ La app cliente actual envia `validateOnly=true`. El endpoint valida el barcode y
 | Cliente DISPLAY contra backend anterior | 409 | Backend devuelve ICT/FCT, la app lo presenta como `El flujo DISPLAY no esta desplegado en el backend. Actualiza/reinicia el servidor.` |
 | Error interno | 500 | `{ "error": "Error al registrar el escaneo", "details": "<detalle>" }` |
 
-### `GET /api/version`
+### `GET /api/updates/latest`
 
 | Validacion | HTTP | JSON |
 |---|---:|---|
-| Version compatible | 200 | `{ "version": "1.2.1", "requiredClientVersion": "1.2.1", "minimumClientVersion": "1.2.1" }` |
-| Endpoint no disponible | 404 | La app muestra `No se pudo validar la version del backend. Actualiza/reinicia el servidor.` |
-| Version incompatible | 200 con otra version requerida | La app muestra `Version incompatible. App <actual>, requerida <requerida>.` |
+| Recurso disponible | 200 | `{ "available": true, "source": "network-share", "version": "1.2.6", "fileName": "AIRE_Setup_1.2.6.exe" }` |
+| Recurso no disponible | 503 | La app muestra `No se pudo comprobar la version en el recurso de actualizaciones.` |
+| No hay instaladores validos | 503 | La app permanece en la version instalada y registra el error en el backend |
+
+### `GET /api/updates/download/<version>`
+
+| Validacion | HTTP | JSON / respuesta |
+|---|---:|---|
+| Version valida e instalador disponible | 200 | Archivo `AIRE_Setup_<version>.exe` |
+| Version con formato invalido | 400 | `{ "error": "Version de actualizacion invalida" }` |
+| Instalador inexistente | 404 | `{ "error": "El instalador solicitado no existe" }` |
+| Recurso no disponible o autenticacion fallida | 503 | `{ "error": "No se pudo descargar el instalador" }` |
 
 ### `POST /api/scans/box/:boxCode/send`
 

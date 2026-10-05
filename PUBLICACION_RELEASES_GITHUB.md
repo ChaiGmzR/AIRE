@@ -5,7 +5,8 @@ Esta guia describe el procedimiento para publicar una version distribuible de AI
 ## Reglas de version
 
 - La version debe usar formato `MAJOR.MINOR.PATCH`, por ejemplo `1.2.4`.
-- La app cliente consulta directamente el release mas reciente de GitHub para detectar actualizaciones.
+- GitHub conserva los releases publicos y sus assets como respaldo de distribucion.
+- La app cliente valida y descarga la ultima version desde el backend de AIRE, que consulta el recurso `\\192.168.1.10\updates\CALIDAD\AIRE`.
 - La version del backend no se usa para validar la version del cliente.
 - El `build-number` de Flutter debe incrementarse en cada compilacion de Windows.
 - No se deben publicar archivos `.env`, contrasenas ni configuraciones de base de datos.
@@ -35,7 +36,17 @@ En el backend actualizar:
 - `package.json`
 - `package-lock.json`
 
-El endpoint `GET /api/version` puede conservarse para diagnostico del backend, pero no participa en la validacion de version de la app cliente.
+El endpoint `GET /api/version` puede conservarse para diagnostico del backend, pero no participa en la validacion de version de la app cliente. La validacion usa `GET /api/updates/latest`.
+
+En el backend, configurar en el `.env` no versionado:
+
+```text
+UPDATE_SHARE_ROOT=\\192.168.1.10\updates\CALIDAD\AIRE
+UPDATE_SHARE_USER=<usuario del recurso compartido>
+UPDATE_SHARE_PASSWORD=<contrasena del recurso compartido>
+```
+
+Las credenciales solo viven en el backend. La app cliente no las recibe ni las guarda. Para cada consulta o descarga el backend autentica temporalmente el recurso, cierra la sesion SMB al terminar y la app copia el instalador a `%TEMP%` antes de ejecutarlo localmente.
 
 ## Validar el codigo
 
@@ -75,9 +86,9 @@ Compress-Archive `
   -Force
 ```
 
-## Generar el instalador EXE
+## Generar el instalador EXE con Inno Setup
 
-El instalador es un wizard grafico autocontenido con .NET y debe:
+El instalador se genera con Inno Setup y debe:
 
 1. Extraer el ZIP en `%LOCALAPPDATA%\IlsanPackingSystem`.
 2. Crear el acceso directo del Escritorio.
@@ -86,31 +97,27 @@ El instalador es un wizard grafico autocontenido con .NET y debe:
 5. Usar el icono embebido del ejecutable.
 6. Registrar la aplicacion en `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall`.
 7. Incluir un desinstalador funcional en la entrada de Windows.
-8. Iniciar la app al terminar.
+8. Iniciar la app al terminar una instalacion manual.
 9. Registrar `pcb_boxing_system.exe` directamente en `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`.
 
-El proyecto usa `WinExe`, por lo que no abre una ventana de consola. La instalacion manual muestra el wizard; el modo `--update` se ejecuta sin interfaz para las actualizaciones automaticas. No se debe iniciar ningun watchdog ni reiniciar la app despues de que el usuario la cierre.
-
-El proyecto del instalador debe incluir como recurso el ZIP de la misma version. Publicar con:
+El script `release/installer/AIRE_Setup.iss` usa el contenido de `build/windows/x64/runner/Release`, no requiere PowerShell para instalar y produce un wizard grafico sin consola. La compilacion debe ejecutarse con Inno Setup Compiler (`ISCC.exe`):
 
 ```powershell
-dotnet publish release/installer_1_2_4/Installer.csproj `
-  --configuration Release `
-  --self-contained true `
-  --runtime win-x64 `
-  --output release/installer_1_2_1/publish
+iscc.exe /DAppVersion=1.2.4 release/installer/AIRE_Setup.iss
 ```
 
-Copiar el resultado como:
+El resultado debe llamarse exactamente:
 
 ```text
 release/AIRE_Setup_1.2.4.exe
 ```
 
+La app ejecuta el instalador descargado desde `%TEMP%` con los parametros silenciosos de Inno Setup (`/VERYSILENT`, `/SUPPRESSMSGBOXES`, `/NORESTART`) para actualizar y reiniciar AIRE. No se debe iniciar ningun watchdog ni reiniciar la app despues de que el usuario la cierre.
+
 ## Verificar antes de publicar
 
 - El ZIP abre correctamente y contiene el ejecutable y `data`.
-- El instalador EXE es autocontenido, no requiere PowerShell y no abre consola.
+- El instalador EXE es generado por Inno Setup, no requiere PowerShell y no abre consola.
 - La entrada de AIRE aparece en Aplicaciones instaladas y ejecuta el desinstalador.
 - El acceso directo del Escritorio se crea correctamente.
 - El acceso directo del Menu Inicio se crea correctamente.
@@ -118,7 +125,8 @@ release/AIRE_Setup_1.2.4.exe
 - La entrada de inicio automatico apunta directamente a `pcb_boxing_system.exe`.
 - Al cerrar la app, no vuelve a iniciarse automaticamente.
 - La app muestra `v1.2.4`.
-- La API de GitHub publica el tag del release antes de distribuir la app.
+- El release de GitHub publica el tag y los assets antes de distribuir la app.
+- El mismo instalador debe copiarse al recurso compartido con el nombre exacto `AIRE_Setup_<version>.exe`.
 
 ## Commit y tag
 
@@ -171,19 +179,20 @@ https://github.com/ChaiGmzR/AIRE/releases/download/v1.2.4/AIRE_1.2.4_windows.zip
 
 ## Actualizacion automatica
 
-La app consulta `https://api.github.com/repos/ChaiGmzR/AIRE/releases/latest` al abrirse. Si GitHub informa una version superior, muestra un modal y puede descargar:
+La app consulta `GET /api/updates/latest` del backend al abrirse. El backend busca el instalador con mayor version en `\\192.168.1.10\updates\CALIDAD\AIRE`. Si encuentra una version superior, la app muestra un modal y descarga:
 
 ```text
-https://github.com/ChaiGmzR/AIRE/releases/download/v<version>/AIRE_Setup_<version>.exe
+GET /api/updates/download/<version>
 ```
 
-Despues de descargarlo, ejecuta el instalador, cierra la app actual y el instalador reemplaza los archivos, recrea los accesos directos y reinicia la app.
+El backend devuelve `503` si el recurso compartido no esta disponible o no puede autenticarse. No hay fallback automatico a GitHub. Despues de descargarlo a `%TEMP%`, la app ejecuta el instalador local, cierra la app actual y el instalador reemplaza los archivos, recrea los accesos directos y reinicia la app.
 
 La primera version que contiene este mecanismo debe instalarse manualmente; una version anterior no puede actualizarse a si misma porque no contiene el codigo del actualizador.
 
 ## Orden de despliegue
 
-1. Confirmar que el backend desplegado responde `GET /ready`.
-2. Publicar el release de la app cliente.
-3. Instalar en una PC de prueba.
-4. Validar linea, flujo, escaneo, `Send`, actualizacion, desinstalacion, accesos directos e icono.
+1. Confirmar que el backend desplegado responde `GET /ready` y tiene configurado el recurso compartido.
+2. Publicar el release de la app cliente en GitHub.
+3. Copiar `AIRE_Setup_<version>.exe` al recurso compartido de actualizaciones.
+4. Instalar en una PC de prueba.
+5. Validar linea, flujo, escaneo, `Send`, actualizacion, desinstalacion, accesos directos e icono.

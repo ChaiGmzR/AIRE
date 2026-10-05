@@ -19,6 +19,13 @@ class BoxingScreen extends StatefulWidget {
   State<BoxingScreen> createState() => _BoxingScreenState();
 }
 
+class _ShiftSelection {
+  final DateTime date;
+  final String code;
+
+  const _ShiftSelection(this.date, this.code);
+}
+
 class _BoxingScreenState extends State<BoxingScreen> {
   static const String _mainPcbType = 'MAIN_PCB';
   static const String _displayType = 'DISPLAY';
@@ -46,6 +53,9 @@ class _BoxingScreenState extends State<BoxingScreen> {
   bool isProcessing = false;
   bool _suspendAutoFocus = false;
   bool _focusScheduled = false;
+  bool _hourlyFollowCurrentShift = true;
+  bool _hourlyRefreshInFlight = false;
+  bool _hourlyRefreshQueued = false;
   Timer? _hourlyRefreshTimer;
 
   int currentBoxCount = 0;
@@ -57,6 +67,9 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
   List<BoxScan> boxScans = [];
   List<HourlyCount> hourlyCounts = [];
+  DateTime? hourlyShiftDate;
+  String? hourlyShiftCode;
+  String? hourlyShiftLabel;
 
   List<String> get _availableLineCodes {
     return _lineCodesByProductionType[selectedProductionType] ??
@@ -105,15 +118,56 @@ class _BoxingScreenState extends State<BoxingScreen> {
   }
 
   Future<void> _refreshHourlyCounts() async {
-    final result = await ApiService.getHourlyCounts(
-      productionType: selectedProductionType,
-      lineCode: selectedLineCode,
-    );
-    if (!mounted || result == null) return;
+    if (_hourlyRefreshInFlight) {
+      _hourlyRefreshQueued = true;
+      return;
+    }
 
-    setState(() {
-      hourlyCounts = result.intervals;
-    });
+    _hourlyRefreshInFlight = true;
+    try {
+      do {
+        _hourlyRefreshQueued = false;
+        final followsCurrentShift = _hourlyFollowCurrentShift;
+        final requestedProductionType = selectedProductionType;
+        final requestedLineCode = selectedLineCode;
+        final requestedShiftDate = hourlyShiftDate;
+        final requestedShiftCode = hourlyShiftCode;
+        final result = await ApiService.getHourlyCounts(
+          productionType: requestedProductionType,
+          lineCode: requestedLineCode,
+          shiftDate: followsCurrentShift ? null : requestedShiftDate,
+          shiftCode: followsCurrentShift ? null : requestedShiftCode,
+        );
+        if (!mounted) return;
+
+        final selectionChanged =
+            selectedProductionType != requestedProductionType ||
+            selectedLineCode != requestedLineCode ||
+            _hourlyFollowCurrentShift != followsCurrentShift ||
+            (!followsCurrentShift &&
+                (hourlyShiftDate != requestedShiftDate ||
+                    hourlyShiftCode != requestedShiftCode));
+        if (selectionChanged) {
+          _hourlyRefreshQueued = true;
+        } else if (result != null) {
+          setState(() {
+            hourlyCounts = result.intervals;
+            hourlyShiftDate = result.shiftDate ?? hourlyShiftDate;
+            hourlyShiftCode = result.shiftCode.isEmpty
+                ? hourlyShiftCode
+                : result.shiftCode;
+            hourlyShiftLabel = result.shiftLabel.isEmpty
+                ? hourlyShiftLabel
+                : result.shiftLabel;
+            if (followsCurrentShift) {
+              shiftCount = result.total;
+            }
+          });
+        }
+      } while (_hourlyRefreshQueued && mounted);
+    } finally {
+      _hourlyRefreshInFlight = false;
+    }
   }
 
   Future<void> _validateAppVersion() async {
@@ -342,7 +396,6 @@ class _BoxingScreenState extends State<BoxingScreen> {
         // Add to local list
         setState(() {
           currentBoxCount = boxScans.length + 1;
-          shiftCount = result.shiftCount ?? shiftCount;
           currentPartNumber = result.partNumber ?? partNumber;
           selectedRowIndex = null;
 
@@ -357,8 +410,6 @@ class _BoxingScreenState extends State<BoxingScreen> {
             ),
           );
         });
-
-        unawaited(_refreshHourlyCounts());
 
         // Clear barcode field and keep focus
         barCodeController.clear();
@@ -413,7 +464,6 @@ class _BoxingScreenState extends State<BoxingScreen> {
     if (result.success) {
       final fileName = result.fileName ?? 'archivo BOX';
       _resetForm();
-      unawaited(_refreshHourlyCounts());
       _showSuccess('Archivo generado: $fileName');
     } else {
       _showError(result.error ?? 'Error al generar el archivo BOX');
@@ -748,18 +798,24 @@ class _BoxingScreenState extends State<BoxingScreen> {
   }
 
   List<HourlyCount> _displayHourlyCounts() {
+    final selection = _hourlySelection;
     final buckets = hourlyCounts.isNotEmpty
         ? hourlyCounts
-        : _buildLocalHourlyBuckets();
+        : _buildLocalHourlyBuckets(
+            shiftDate: selection.date,
+            shiftCode: selection.code,
+          );
     final counts = buckets.map((bucket) => bucket.count).toList();
 
-    for (final scan in boxScans) {
-      for (var index = 0; index < buckets.length; index++) {
-        final bucket = buckets[index];
-        if (!scan.readTime.isBefore(bucket.start) &&
-            scan.readTime.isBefore(bucket.end)) {
-          counts[index]++;
-          break;
+    if (_hourlyIsCurrentSelection(selection)) {
+      for (final scan in boxScans) {
+        for (var index = 0; index < buckets.length; index++) {
+          final bucket = buckets[index];
+          if (!scan.readTime.isBefore(bucket.start) &&
+              scan.readTime.isBefore(bucket.end)) {
+            counts[index]++;
+            break;
+          }
         }
       }
     }
@@ -775,34 +831,19 @@ class _BoxingScreenState extends State<BoxingScreen> {
     ];
   }
 
-  List<HourlyCount> _buildLocalHourlyBuckets() {
-    final now = DateTime.now();
-    final minutes = now.hour * 60 + now.minute;
-    DateTime start;
-    DateTime end;
-
-    if (minutes >= 7 * 60 + 30 && minutes < 17 * 60 + 30) {
-      start = DateTime(now.year, now.month, now.day, 7, 30);
-      end = DateTime(now.year, now.month, now.day, 17, 30);
-    } else if (minutes >= 17 * 60 + 30 && minutes < 22 * 60 + 30) {
-      start = DateTime(now.year, now.month, now.day, 17, 30);
-      end = DateTime(now.year, now.month, now.day, 22, 30);
-    } else if (minutes < 7 * 60 + 30) {
-      start = DateTime(now.year, now.month, now.day - 1, 22, 30);
-      end = DateTime(now.year, now.month, now.day, 7, 30);
-    } else {
-      start = DateTime(now.year, now.month, now.day, 22, 30);
-      end = DateTime(now.year, now.month, now.day + 1, 7, 30);
-    }
-
+  List<HourlyCount> _buildLocalHourlyBuckets({
+    required DateTime shiftDate,
+    required String shiftCode,
+  }) {
+    final range = _shiftRange(shiftDate, shiftCode);
     final buckets = <HourlyCount>[];
-    var cursor = start;
-    while (cursor.isBefore(end)) {
+    var cursor = range.start;
+    while (cursor.isBefore(range.end)) {
       final next = DateTime.fromMillisecondsSinceEpoch(
         math.min(
           cursor.millisecondsSinceEpoch +
               const Duration(hours: 1).inMilliseconds,
-          end.millisecondsSinceEpoch,
+          range.end.millisecondsSinceEpoch,
         ),
       );
       buckets.add(
@@ -816,6 +857,129 @@ class _BoxingScreenState extends State<BoxingScreen> {
       cursor = next;
     }
     return buckets;
+  }
+
+  _ShiftSelection get _hourlySelection {
+    if (hourlyShiftDate != null && hourlyShiftCode != null) {
+      return _ShiftSelection(hourlyShiftDate!, hourlyShiftCode!);
+    }
+
+    return _currentShiftSelection();
+  }
+
+  _ShiftSelection _currentShiftSelection() {
+    final now = DateTime.now();
+    final minutes = now.hour * 60 + now.minute;
+    if (minutes >= 7 * 60 + 30 && minutes < 17 * 60 + 30) {
+      return _ShiftSelection(DateTime(now.year, now.month, now.day), 'DAY');
+    }
+    if (minutes >= 17 * 60 + 30 && minutes < 22 * 60 + 30) {
+      return _ShiftSelection(
+        DateTime(now.year, now.month, now.day),
+        'OVERTIME',
+      );
+    }
+    if (minutes < 7 * 60 + 30) {
+      return _ShiftSelection(
+        DateTime(now.year, now.month, now.day - 1),
+        'NIGHT',
+      );
+    }
+    return _ShiftSelection(DateTime(now.year, now.month, now.day), 'NIGHT');
+  }
+
+  ({DateTime start, DateTime end}) _shiftRange(
+    DateTime date,
+    String shiftCode,
+  ) {
+    final day = DateTime(date.year, date.month, date.day);
+    switch (shiftCode) {
+      case 'DAY':
+        return (
+          start: DateTime(day.year, day.month, day.day, 7, 30),
+          end: DateTime(day.year, day.month, day.day, 17, 30),
+        );
+      case 'OVERTIME':
+        return (
+          start: DateTime(day.year, day.month, day.day, 17, 30),
+          end: DateTime(day.year, day.month, day.day, 22, 30),
+        );
+      default:
+        return (
+          start: DateTime(day.year, day.month, day.day, 22, 30),
+          end: DateTime(day.year, day.month, day.day + 1, 7, 30),
+        );
+    }
+  }
+
+  _ShiftSelection _shiftOffset(_ShiftSelection selection, int offset) {
+    var date = selection.date;
+    var index = const ['DAY', 'OVERTIME', 'NIGHT'].indexOf(selection.code);
+    var target = index + offset;
+
+    while (target < 0) {
+      target += 3;
+      date = DateTime(date.year, date.month, date.day - 1);
+    }
+    while (target >= 3) {
+      target -= 3;
+      date = DateTime(date.year, date.month, date.day + 1);
+    }
+
+    return _ShiftSelection(date, const ['DAY', 'OVERTIME', 'NIGHT'][target]);
+  }
+
+  bool _hourlyIsCurrentSelection(_ShiftSelection selection) {
+    final current = _currentShiftSelection();
+    return selection.code == current.code &&
+        selection.date.year == current.date.year &&
+        selection.date.month == current.date.month &&
+        selection.date.day == current.date.day;
+  }
+
+  bool _canGoToNextHourlyShift() {
+    final next = _shiftOffset(_hourlySelection, 1);
+    return !_isShiftAfter(next, _currentShiftSelection());
+  }
+
+  bool _isShiftAfter(_ShiftSelection first, _ShiftSelection second) {
+    final firstStart = _shiftRange(first.date, first.code).start;
+    final secondStart = _shiftRange(second.date, second.code).start;
+    return firstStart.isAfter(secondStart);
+  }
+
+  void _changeHourlyShift(int offset) {
+    final next = _shiftOffset(_hourlySelection, offset);
+    if (offset > 0 && _isShiftAfter(next, _currentShiftSelection())) {
+      return;
+    }
+
+    setState(() {
+      _hourlyFollowCurrentShift = _hourlyIsCurrentSelection(next);
+      hourlyShiftDate = next.date;
+      hourlyShiftCode = next.code;
+      hourlyShiftLabel = _shiftLabel(next.code);
+      hourlyCounts = [];
+    });
+    unawaited(_refreshHourlyCounts());
+  }
+
+  String _shiftLabel(String code) {
+    switch (code) {
+      case 'DAY':
+        return 'Dia';
+      case 'OVERTIME':
+        return 'T.E.';
+      default:
+        return 'Noche';
+    }
+  }
+
+  String _formatShiftDate(DateTime value) {
+    final year = value.year.toString().padLeft(4, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '$year-$month-$day';
   }
 
   String _formatClock(DateTime value) {
@@ -846,12 +1010,49 @@ class _BoxingScreenState extends State<BoxingScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      'HxH',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Builder(
+                      builder: (context) {
+                        final selection = _hourlySelection;
+                        return Row(
+                          children: [
+                            SizedBox(
+                              width: 32,
+                              height: 28,
+                              child: IconButton(
+                                tooltip: 'Turno anterior',
+                                onPressed: () => _changeHourlyShift(-1),
+                                padding: EdgeInsets.zero,
+                                icon: const Icon(Icons.arrow_left, size: 20),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                'HxH    Fecha: ${_formatShiftDate(selection.date)}    '
+                                'Turno: ${hourlyShiftLabel ?? _shiftLabel(selection.code)}',
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 32,
+                              height: 28,
+                              child: IconButton(
+                                tooltip: 'Siguiente turno',
+                                onPressed: _canGoToNextHourlyShift()
+                                    ? () => _changeHourlyShift(1)
+                                    : null,
+                                padding: EdgeInsets.zero,
+                                icon: const Icon(Icons.arrow_right, size: 20),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 3),
                     Container(

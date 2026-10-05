@@ -402,14 +402,22 @@ class ApiService {
   static Future<HourlyCountsResult?> getHourlyCounts({
     required String productionType,
     required String lineCode,
+    DateTime? shiftDate,
+    String? shiftCode,
   }) async {
     try {
-      final uri = Uri.parse('$_baseUrl/api/scans/hourly').replace(
-        queryParameters: {
-          'productionType': productionType,
-          'lineCode': lineCode,
-        },
-      );
+      final queryParameters = <String, String>{
+        'productionType': productionType,
+        'lineCode': lineCode,
+      };
+      if (shiftDate != null && shiftCode != null) {
+        queryParameters['date'] = _formatDate(shiftDate);
+        queryParameters['shift'] = shiftCode;
+      }
+
+      final uri = Uri.parse(
+        '$_baseUrl/api/scans/hourly',
+      ).replace(queryParameters: queryParameters);
       final response = await http.get(uri);
 
       if (response.statusCode != 200) {
@@ -424,6 +432,10 @@ class ApiService {
 
       return HourlyCountsResult(
         shift: _asString(data?['shift']),
+        shiftCode: _asString(data?['shiftCode']),
+        shiftLabel: _asString(data?['shiftLabel']),
+        shiftDate: DateTime.tryParse(_asString(data?['shiftDate'])),
+        total: _asInt(data?['total']),
         intervals: intervals
             .whereType<Map>()
             .map(HourlyCount.fromJson)
@@ -432,6 +444,13 @@ class ApiService {
     } catch (_) {
       return null;
     }
+  }
+
+  static String _formatDate(DateTime value) {
+    final year = value.year.toString().padLeft(4, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '$year-$month-$day';
   }
 
   /// Get all scans for a box
@@ -565,24 +584,16 @@ class ApiService {
     }
   }
 
-  /// Validate the client against the latest public GitHub release.
+  /// Validate the client against the latest installer on the update share.
   static Future<VersionValidationResult> validateVersion({
     required String clientVersion,
   }) async {
     const invalidVersionMessage =
-        'No se pudo comprobar la version en GitHub. Verifica la conexion a Internet.';
+        'No se pudo comprobar la version en el recurso de actualizaciones.';
 
     try {
       final response = await http
-          .get(
-            Uri.parse(
-              'https://api.github.com/repos/ChaiGmzR/AIRE/releases/latest',
-            ),
-            headers: const {
-              'Accept': 'application/vnd.github+json',
-              'User-Agent': 'AIRE-Client',
-            },
-          )
+          .get(Uri.parse('$_baseUrl/api/updates/latest'))
           .timeout(const Duration(seconds: 5));
 
       if (response.statusCode != 200) {
@@ -593,17 +604,14 @@ class ApiService {
       }
 
       final data = _tryDecodeJsonObject(response.body);
-      if (data == null) {
+      if (data == null || data['available'] != true) {
         return VersionValidationResult(
           valid: false,
-          message: 'Respuesta invalida del servidor al validar version.',
+          message: invalidVersionMessage,
         );
       }
 
-      final tagName = _asString(data['tag_name']);
-      final latestVersion = tagName.startsWith('v')
-          ? tagName.substring(1)
-          : tagName;
+      final latestVersion = _asString(data['version']);
       if (!RegExp(r'^\d+\.\d+\.\d+$').hasMatch(latestVersion)) {
         return VersionValidationResult(
           valid: false,
@@ -749,9 +757,20 @@ class BoxScanItem {
 
 class HourlyCountsResult {
   final String shift;
+  final String shiftCode;
+  final String shiftLabel;
+  final DateTime? shiftDate;
+  final int total;
   final List<HourlyCount> intervals;
 
-  HourlyCountsResult({required this.shift, required this.intervals});
+  HourlyCountsResult({
+    required this.shift,
+    required this.shiftCode,
+    required this.shiftLabel,
+    required this.shiftDate,
+    required this.total,
+    required this.intervals,
+  });
 }
 
 class HourlyCount {

@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'api_service.dart';
+
 class AppUpdateService {
   static Future<String> downloadAndLaunchInstaller(String version) async {
     if (!RegExp(r'^\d+\.\d+\.\d+$').hasMatch(version)) {
@@ -7,8 +9,7 @@ class AppUpdateService {
     }
 
     final installerUrl = Uri.parse(
-      'https://github.com/ChaiGmzR/AIRE/releases/download/v$version/'
-      'AIRE_Setup_$version.exe',
+      '${ApiService.baseUrl}/api/updates/download/$version',
     );
     final installerPath = _temporaryInstallerPath(version);
     final installerFile = File(installerPath);
@@ -21,7 +22,7 @@ class AppUpdateService {
 
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException(
-          'GitHub respondio HTTP ${response.statusCode}',
+          'El backend respondio HTTP ${response.statusCode}',
           uri: installerUrl,
         );
       }
@@ -36,7 +37,11 @@ class AppUpdateService {
       try {
         await Process.start(
           installerFile.path,
-          const <String>['--update'],
+          const <String>[
+            '/VERYSILENT',
+            '/SUPPRESSMSGBOXES',
+            '/NORESTART',
+          ],
           mode: ProcessStartMode.detached,
         );
       } catch (_) {
