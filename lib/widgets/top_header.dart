@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../app_info.dart';
 
 class TopHeader extends StatelessWidget {
-  const TopHeader({super.key});
+  final VoidCallback? onCheckForUpdates;
+
+  const TopHeader({super.key, this.onCheckForUpdates});
 
   @override
   Widget build(BuildContext context) {
@@ -44,6 +46,16 @@ class TopHeader extends StatelessWidget {
                 color: Colors.white,
               ),
             ),
+          ),
+          IconButton(
+            onPressed: onCheckForUpdates,
+            tooltip: 'Buscar actualizaciones',
+            iconSize: 16,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+            splashRadius: 14,
+            color: Colors.white70,
+            icon: const Icon(Icons.system_update_alt),
           ),
         ],
       ),

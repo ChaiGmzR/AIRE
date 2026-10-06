@@ -584,77 +584,6 @@ class ApiService {
     }
   }
 
-  /// Validate the client against the latest installer on the update share.
-  static Future<VersionValidationResult> validateVersion({
-    required String clientVersion,
-  }) async {
-    const invalidVersionMessage =
-        'No se pudo comprobar la version en el recurso de actualizaciones.';
-
-    try {
-      final response = await http
-          .get(Uri.parse('$_baseUrl/api/updates/latest'))
-          .timeout(const Duration(seconds: 5));
-
-      if (response.statusCode != 200) {
-        return VersionValidationResult(
-          valid: false,
-          message: invalidVersionMessage,
-        );
-      }
-
-      final data = _tryDecodeJsonObject(response.body);
-      if (data == null || data['available'] != true) {
-        return VersionValidationResult(
-          valid: false,
-          message: invalidVersionMessage,
-        );
-      }
-
-      final latestVersion = _asString(data['version']);
-      if (!RegExp(r'^\d+\.\d+\.\d+$').hasMatch(latestVersion)) {
-        return VersionValidationResult(
-          valid: false,
-          message: invalidVersionMessage,
-        );
-      }
-
-      if (_isNewerVersion(latestVersion, clientVersion)) {
-        return VersionValidationResult(
-          valid: false,
-          serverVersion: latestVersion,
-          requiredVersion: latestVersion,
-          message: 'Hay una nueva version disponible: $latestVersion.',
-        );
-      }
-
-      return VersionValidationResult(valid: true, serverVersion: latestVersion);
-    } catch (_) {
-      return VersionValidationResult(
-        valid: false,
-        message: invalidVersionMessage,
-      );
-    }
-  }
-
-  static bool _isNewerVersion(String candidate, String current) {
-    List<int> parse(String value) =>
-        value.split('.').map((part) => int.tryParse(part) ?? 0).toList();
-
-    final candidateParts = parse(candidate);
-    final currentParts = parse(current);
-    for (var index = 0; index < 3; index++) {
-      final candidatePart = index < candidateParts.length
-          ? candidateParts[index]
-          : 0;
-      final currentPart = index < currentParts.length ? currentParts[index] : 0;
-      if (candidatePart != currentPart) {
-        return candidatePart > currentPart;
-      }
-    }
-    return false;
-  }
-
   /// Get API status
   static Future<ApiStatus> getStatus() async {
     try {
@@ -846,18 +775,4 @@ class ApiStatus {
   final String? error;
 
   ApiStatus({required this.connected, this.shift, this.serverTime, this.error});
-}
-
-class VersionValidationResult {
-  final bool valid;
-  final String message;
-  final String? serverVersion;
-  final String? requiredVersion;
-
-  VersionValidationResult({
-    required this.valid,
-    this.message = '',
-    this.serverVersion,
-    this.requiredVersion,
-  });
 }

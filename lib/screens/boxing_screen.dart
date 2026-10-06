@@ -11,6 +11,7 @@ import '../models/box_scan.dart';
 import '../services/api_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/app_update_service.dart';
+import '../services/update_share_service.dart';
 
 class BoxingScreen extends StatefulWidget {
   const BoxingScreen({super.key});
@@ -170,23 +171,106 @@ class _BoxingScreenState extends State<BoxingScreen> {
     }
   }
 
-  Future<void> _validateAppVersion() async {
-    final validation = await ApiService.validateVersion(
-      clientVersion: AppInfo.version,
-    );
-    if (!mounted || validation.valid) {
+  void _onManualUpdateCheck() {
+    unawaited(_validateAppVersion(manual: true));
+  }
+
+  Future<void> _validateAppVersion({bool manual = false}) async {
+    UpdateShareInstaller latest;
+    try {
+      latest = await UpdateShareService.getLatestInstaller();
+    } on UpdateShareCredentialsRequired {
+      final credentials = await _showUpdateCredentialsDialog();
+      if (!mounted || credentials == null) {
+        _showError('No se proporcionaron credenciales para actualizar.');
+        _scheduleExpectedFocus();
+        return;
+      }
+
+      UpdateShareService.setCredentials(credentials);
+      try {
+        latest = await UpdateShareService.getLatestInstaller();
+      } catch (error) {
+        _showError(error.toString());
+        _scheduleExpectedFocus();
+        return;
+      }
+    } catch (error) {
+      _showError(error.toString());
+      _scheduleExpectedFocus();
       return;
     }
 
-    final requiredVersion = validation.requiredVersion;
-    if (requiredVersion != null &&
-        _isNewerVersion(requiredVersion, AppInfo.version)) {
-      await _showUpdateDialog(requiredVersion);
+    if (!mounted || !_isNewerVersion(latest.version, AppInfo.version)) {
+      if (manual && mounted) {
+        _showSuccess('La version instalada ya es la mas reciente.');
+      }
       return;
     }
+    await _showUpdateDialog(latest.version);
+  }
 
-    _showError(validation.message);
-    _scheduleExpectedFocus();
+  Future<UpdateShareCredentials?> _showUpdateCredentialsDialog() async {
+    final usernameController = TextEditingController();
+    final passwordController = TextEditingController();
+    try {
+      return await showDialog<UpdateShareCredentials>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Acceso a actualizaciones'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Ingrese las credenciales del recurso compartido. '
+                    'No se guardaran en esta PC.',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: usernameController,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Usuario'),
+                ),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Contrasena'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final username = usernameController.text.trim();
+                final password = passwordController.text;
+                if (username.isEmpty || password.isEmpty) return;
+                Navigator.of(dialogContext).pop(
+                  UpdateShareCredentials(
+                    username: username,
+                    password: password,
+                  ),
+                );
+              },
+              child: const Text('Conectar'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      usernameController.dispose();
+      passwordController.dispose();
+    }
   }
 
   Future<void> _showUpdateDialog(String requiredVersion) async {
@@ -665,7 +749,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
       body: Column(
         children: [
           // Top Header with Ilsan Packing System
-          const TopHeader(),
+          TopHeader(onCheckForUpdates: _onManualUpdateCheck),
 
           // Main content
           Expanded(

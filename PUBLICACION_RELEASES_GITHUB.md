@@ -6,7 +6,7 @@ Esta guia describe el procedimiento para publicar una version distribuible de AI
 
 - La version debe usar formato `MAJOR.MINOR.PATCH`, por ejemplo `1.2.4`.
 - GitHub conserva los releases publicos y sus assets como respaldo de distribucion.
-- La app cliente valida y descarga la ultima version desde el backend de AIRE, que consulta el recurso `\\192.168.1.10\updates\CALIDAD\AIRE`.
+- La app cliente valida y descarga directamente desde `\\192.168.1.10\updates\CALIDAD\AIRE`.
 - La version del backend no se usa para validar la version del cliente.
 - El `build-number` de Flutter debe incrementarse en cada compilacion de Windows.
 - No se deben publicar archivos `.env`, contrasenas ni configuraciones de base de datos.
@@ -36,17 +36,9 @@ En el backend actualizar:
 - `package.json`
 - `package-lock.json`
 
-El endpoint `GET /api/version` puede conservarse para diagnostico del backend, pero no participa en la validacion de version de la app cliente. La validacion usa `GET /api/updates/latest`.
+El endpoint `GET /api/version` y los endpoints de actualizacion del backend pueden conservarse para compatibilidad, pero no participan en la validacion de version de la app cliente.
 
-En el backend, configurar en el `.env` no versionado:
-
-```text
-UPDATE_SHARE_ROOT=\\192.168.1.10\updates\CALIDAD\AIRE
-UPDATE_SHARE_USER=<usuario del recurso compartido>
-UPDATE_SHARE_PASSWORD=<contrasena del recurso compartido>
-```
-
-Las credenciales solo viven en el backend. La app cliente no las recibe ni las guarda. Para cada consulta o descarga el backend autentica temporalmente el recurso, cierra la sesion SMB al terminar y la app copia el instalador a `%TEMP%` antes de ejecutarlo localmente.
+La app solicita las credenciales SMB cuando no existe acceso disponible, las conserva unicamente en memoria mientras permanece abierta y usa `net use` con `/persistent:no`. Las credenciales no se escriben en archivos ni se incluyen en el instalador. La verificacion tambien puede repetirse con el boton pequeno junto a la marca de version en el encabezado.
 
 ## Validar el codigo
 
@@ -179,13 +171,13 @@ https://github.com/ChaiGmzR/AIRE/releases/download/v1.2.4/AIRE_1.2.4_windows.zip
 
 ## Actualizacion automatica
 
-La app consulta `GET /api/updates/latest` del backend al abrirse. El backend busca el instalador con mayor version en `\\192.168.1.10\updates\CALIDAD\AIRE`. Si encuentra una version superior, la app muestra un modal y descarga:
+La app consulta directamente `\\192.168.1.10\updates\CALIDAD\AIRE` al abrirse. Lista los archivos `AIRE_Setup_<version>.exe`, selecciona la version mayor y, si es superior a la instalada, muestra un modal y copia el instalador a `%TEMP%`.
 
 ```text
-GET /api/updates/download/<version>
+\\192.168.1.10\updates\CALIDAD\AIRE\AIRE_Setup_<version>.exe
 ```
 
-El backend devuelve `503` si el recurso compartido no esta disponible o no puede autenticarse. No hay fallback automatico a GitHub. Despues de descargarlo a `%TEMP%`, la app ejecuta el instalador local, cierra la app actual y el instalador reemplaza los archivos, recrea los accesos directos y reinicia la app.
+Si el recurso compartido no esta disponible o no puede autenticarse, la app muestra el error y no usa GitHub como fallback. Despues de copiarlo a `%TEMP%`, ejecuta el instalador local, cierra la app actual y el instalador reemplaza los archivos, recrea los accesos directos y reinicia la app.
 
 La primera version que contiene este mecanismo debe instalarse manualmente; una version anterior no puede actualizarse a si misma porque no contiene el codigo del actualizador.
 
