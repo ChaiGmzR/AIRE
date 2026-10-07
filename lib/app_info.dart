@@ -1,6 +1,6 @@
 class AppInfo {
   static const String version = String.fromEnvironment(
     'APP_VERSION',
-    defaultValue: '1.2.8',
+    defaultValue: '1.3.0',
   );
 }

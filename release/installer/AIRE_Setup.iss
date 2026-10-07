@@ -1,5 +1,5 @@
 ; Build with:
-;   iscc.exe /DAppVersion=1.2.7 release\installer\AIRE_Setup.iss
+;   iscc.exe /DAppVersion=1.3.0 release\installer\AIRE_Setup.iss
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"

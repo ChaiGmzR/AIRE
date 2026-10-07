@@ -18,10 +18,7 @@ class BoxingListTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey.shade400),
-      ),
+      color: const Color(0xFFE0E0E0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -32,7 +29,7 @@ class BoxingListTable extends StatelessWidget {
             child: Row(
               children: [
                 const Text(
-                  'Boxing List',
+                  'Lista de escaneo',
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: 16),
@@ -63,53 +60,62 @@ class BoxingListTable extends StatelessWidget {
           ),
 
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Table header
-                Container(
-                  color: const Color(0xFF2C3E50),
-                  child: Row(
-                    children: [
-                      _buildHeaderCell('No', 1),
-                      _buildHeaderCell('Box Id', 3),
-                      _buildHeaderCell('BarCode', 4),
-                      _buildHeaderCell('Read Time', 3),
-                    ],
+            child: Padding(
+              padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Table header
+                  Container(
+                    color: const Color(0xFF2C3E50),
+                    child: Row(
+                      children: [
+                        _buildHeaderCell('No.', 1),
+                        _buildHeaderCell('Box Id', 3),
+                        _buildHeaderCell('BarCode', 4),
+                        _buildHeaderCell('Hora', 3),
+                      ],
+                    ),
                   ),
-                ),
 
-                // Table body
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: boxScans.length,
-                    itemBuilder: (context, index) {
-                      final scan = boxScans[index];
-                      final isSelected = selectedRowIndex == index;
-                      final isEven = index % 2 == 0;
+                  // Table body
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: boxScans.length > 100 ? boxScans.length : 100,
+                      itemBuilder: (context, index) {
+                        final scan = index < boxScans.length
+                            ? boxScans[index]
+                            : null;
+                        final isSelected = scan != null &&
+                            selectedRowIndex == index;
+                        final isEven = index % 2 == 0;
 
-                      return InkWell(
-                        onTap: () => onRowSelected(index),
-                        child: Container(
-                          color: isSelected
-                              ? const Color(0xFF3498DB).withValues(alpha: 0.3)
-                              : isEven
-                              ? const Color(0xFFF5F5F5)
-                              : Colors.white,
-                          child: Row(
-                            children: [
-                              _buildDataCell(scan.no.toString(), 1),
-                              _buildDataCell(scan.boxId, 3),
-                              _buildDataCell(scan.barCode, 4),
-                              _buildDataCell(scan.formattedReadTime, 3),
-                            ],
+                        return InkWell(
+                          onTap: scan == null ? null : () => onRowSelected(index),
+                          child: Container(
+                            color: isSelected
+                                ? const Color(0xFF3498DB).withValues(alpha: 0.3)
+                                : isEven
+                                ? const Color(0xFFF5F5F5)
+                                : Colors.white,
+                            child: Row(
+                              children: [
+                                _buildDataCell('${index + 1}', 1),
+                                _buildDataCell(scan?.boxId ?? '', 3),
+                                _buildDataCell(scan?.barCode ?? '', 4),
+                                _buildDataCell(
+                                  scan?.formattedReadTime ?? '',
+                                  3,
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -122,7 +128,7 @@ class BoxingListTable extends StatelessWidget {
       flex: flex,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-        child: Text(
+      child: Text(
           text,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -131,6 +137,9 @@ class BoxingListTable extends StatelessWidget {
             fontWeight: FontWeight.bold,
             color: Colors.white,
           ),
+        ),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.white24),
         ),
       ),
     );
@@ -141,6 +150,10 @@ class BoxingListTable extends StatelessWidget {
       flex: flex,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          border: Border.all(color: Colors.grey.shade300),
+        ),
         child: Text(
           text,
           maxLines: 1,

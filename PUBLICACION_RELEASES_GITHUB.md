@@ -113,7 +113,7 @@ La app ejecuta el instalador descargado desde `%TEMP%` con los parametros silenc
 - La entrada de AIRE aparece en Aplicaciones instaladas y ejecuta el desinstalador.
 - El acceso directo del Escritorio se crea correctamente.
 - El acceso directo del Menu Inicio se crea correctamente.
-- El icono corresponde a `ImagenLogo1.png` convertido a `app_icon.ico`.
+- El icono corresponde a `assets/AIRE.png` convertido a `app_icon.ico`.
 - La entrada de inicio automatico apunta directamente a `pcb_boxing_system.exe`.
 - Al cerrar la app, no vuelve a iniciarse automaticamente.
 - La app muestra `v1.2.4`.

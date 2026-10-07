@@ -440,6 +440,19 @@ class ApiService {
             .whereType<Map>()
             .map(HourlyCount.fromJson)
             .toList(),
+        partCounts: (data?['partCounts'] is List)
+            ? (data?['partCounts'] as List)
+                .whereType<Map>()
+                .map(PartCount.fromJson)
+                .toList()
+            : const [],
+        plans: (data?['plans'] is List)
+            ? (data?['plans'] as List)
+                .whereType<Map>()
+                .map(PartPlan.fromJson)
+                .toList()
+            : const [],
+        dailyReleaseTotal: _asInt(data?['dailyReleaseTotal']),
       );
     } catch (_) {
       return null;
@@ -691,6 +704,9 @@ class HourlyCountsResult {
   final DateTime? shiftDate;
   final int total;
   final List<HourlyCount> intervals;
+  final List<PartCount> partCounts;
+  final List<PartPlan> plans;
+  final int dailyReleaseTotal;
 
   HourlyCountsResult({
     required this.shift,
@@ -699,7 +715,57 @@ class HourlyCountsResult {
     required this.shiftDate,
     required this.total,
     required this.intervals,
+    required this.partCounts,
+    required this.plans,
+    required this.dailyReleaseTotal,
   });
+}
+
+class PartPlan {
+  final String partNumber;
+  final int planCount;
+  final String status;
+  final int releaseCount;
+
+  const PartPlan({
+    required this.partNumber,
+    required this.planCount,
+    required this.status,
+    required this.releaseCount,
+  });
+
+  factory PartPlan.fromJson(Map value) {
+    int parseInt(dynamic input) {
+      if (input is int) return input;
+      return int.tryParse(input?.toString() ?? '') ?? 0;
+    }
+
+    return PartPlan(
+      partNumber: value['partNumber']?.toString() ?? '',
+      planCount: parseInt(value['planCount']),
+      status: value['status']?.toString() ?? '',
+      releaseCount: parseInt(value['releaseCount']),
+    );
+  }
+}
+
+class PartCount {
+  final String partNumber;
+  final int count;
+
+  const PartCount({
+    required this.partNumber,
+    required this.count,
+  });
+
+  factory PartCount.fromJson(Map value) {
+    return PartCount(
+      partNumber: value['partNumber']?.toString() ?? '',
+      count: value['count'] is int
+          ? value['count'] as int
+          : int.tryParse(value['count']?.toString() ?? '') ?? 0,
+    );
+  }
 }
 
 class HourlyCount {

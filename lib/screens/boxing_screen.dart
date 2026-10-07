@@ -11,6 +11,7 @@ import '../models/box_scan.dart';
 import '../services/api_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/app_update_service.dart';
+import '../services/sound_service.dart';
 import '../services/update_share_service.dart';
 
 class BoxingScreen extends StatefulWidget {
@@ -47,6 +48,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
   final FocusNode boxIdFocusNode = FocusNode();
   final FocusNode barCodeFocusNode = FocusNode();
+  final SoundService _soundService = SoundService();
+  final ScrollController _partPlanScrollController = ScrollController();
 
   bool boxIdLocked = false;
   bool scannerNormal = true;
@@ -68,6 +71,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
   List<BoxScan> boxScans = [];
   List<HourlyCount> hourlyCounts = [];
+  List<PartPlan> partPlans = [];
+  int dailyReleaseTotal = 0;
   DateTime? hourlyShiftDate;
   String? hourlyShiftCode;
   String? hourlyShiftLabel;
@@ -106,6 +111,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
     companyCodeController.dispose();
     boxIdFocusNode.dispose();
     barCodeFocusNode.dispose();
+    _partPlanScrollController.dispose();
+    unawaited(_soundService.dispose());
     super.dispose();
   }
 
@@ -153,6 +160,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
         } else if (result != null) {
           setState(() {
             hourlyCounts = result.intervals;
+            partPlans = _mergePartPlans(result.plans, result.partCounts);
+            dailyReleaseTotal = result.dailyReleaseTotal;
             hourlyShiftDate = result.shiftDate ?? hourlyShiftDate;
             hourlyShiftCode = result.shiftCode.isEmpty
                 ? hourlyShiftCode
@@ -496,6 +505,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
         });
 
         // Clear barcode field and keep focus
+        unawaited(_soundService.playValidated());
         barCodeController.clear();
       } else {
         final error = result.error ?? 'Error al registrar el escaneo';
@@ -547,6 +557,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
     if (result.success) {
       final fileName = result.fileName ?? 'archivo BOX';
+      unawaited(_soundService.playSent());
       _resetForm();
       _showSuccess('Archivo generado: $fileName');
     } else {
@@ -705,6 +716,7 @@ class _BoxingScreenState extends State<BoxingScreen> {
   }
 
   void _showError(String message) {
+    unawaited(_soundService.playError());
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -768,13 +780,16 @@ class _BoxingScreenState extends State<BoxingScreen> {
                       children: [
                         Expanded(
                           flex: 1,
-                          child: BoxingListTable(
-                            boxScans: boxScans,
-                            selectedRowIndex: selectedRowIndex,
-                            onRowSelected: _onRowSelected,
-                            onDeleteSelected: () {
-                              _onDeleteSelected();
-                            },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: BoxingListTable(
+                              boxScans: boxScans,
+                              selectedRowIndex: selectedRowIndex,
+                              onRowSelected: _onRowSelected,
+                              onDeleteSelected: () {
+                                _onDeleteSelected();
+                              },
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -867,15 +882,241 @@ class _BoxingScreenState extends State<BoxingScreen> {
 
   Widget _buildReservedWorkArea() {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey.shade400),
-      ),
+      color: const Color(0xFFC6C6C6),
+      padding: const EdgeInsets.all(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildHourlyTable(),
-          const Expanded(child: SizedBox()),
+          const SizedBox(height: 8),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _buildPartCountTable()),
+                const SizedBox(width: 8),
+                const Expanded(child: SizedBox()),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<PartPlan> _displayPartPlans() => partPlans;
+
+  List<PartPlan> _mergePartPlans(
+    List<PartPlan> plans,
+    List<PartCount> counts,
+  ) {
+    final merged = <String, PartPlan>{
+      for (final plan in plans) plan.partNumber: plan,
+    };
+
+    for (final count in counts) {
+      if (!merged.containsKey(count.partNumber)) {
+        merged[count.partNumber] = PartPlan(
+          partNumber: count.partNumber,
+          planCount: 0,
+          status: 'Sin plan',
+          releaseCount: count.count,
+        );
+      }
+    }
+
+    final values = merged.values.toList()
+      ..sort((left, right) => left.partNumber.compareTo(right.partNumber));
+    return values;
+  }
+
+  Widget _buildPartCountTable() {
+    final plans = _displayPartPlans();
+    final rowCount = math.max(plans.length, 20);
+
+    return Container(
+      color: const Color(0xFFE0E0E0),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const titleHeight = 28.0;
+          const headerHeight = 28.0;
+          const totalHeight = 30.0;
+          const rowHeight = 28.0;
+          final availableRows = math.max(
+            1,
+            ((constraints.maxHeight -
+                        titleHeight -
+                        headerHeight -
+                        totalHeight) /
+                    rowHeight)
+                .floor(),
+          );
+          final scrollRequired = rowCount > availableRows;
+          final dataHeight = scrollRequired
+              ? math.max(rowHeight, availableRows * rowHeight)
+              : rowCount * rowHeight;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                height: titleHeight,
+                child: Container(
+                  color: const Color(0xFFE0E0E0),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  child: const Text(
+                    'Resultados',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Column(
+                  children: [
+                    _buildPartPlanHeader(headerHeight),
+                    SizedBox(
+                      height: dataHeight,
+                      child: _buildPartPlanRows(
+                        plans,
+                        rowCount,
+                        scrollRequired,
+                      ),
+                    ),
+                    _buildPartPlanTotal(totalHeight),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildPartPlanHeader(double height) {
+    return SizedBox(
+      height: height,
+      child: Container(
+        color: const Color(0xFF2C3E50),
+        child: const Row(
+          children: [
+            Expanded(child: _PartCountCell('No.', isHeader: true)),
+            Expanded(
+              flex: 4,
+              child: _PartCountCell('Numero de parte', isHeader: true),
+            ),
+            Expanded(
+              flex: 2,
+              child: _PartCountCell('Plan', isHeader: true),
+            ),
+            Expanded(
+              flex: 3,
+              child: _PartCountCell('Estatus', isHeader: true),
+            ),
+            Expanded(
+              flex: 2,
+              child: _PartCountCell('Liberacion', isHeader: true),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPartPlanRows(
+    List<PartPlan> plans,
+    int rowCount,
+    bool scrollRequired,
+  ) {
+    final list = ListView.builder(
+      controller: _partPlanScrollController,
+      padding: scrollRequired ? const EdgeInsets.only(bottom: 1) : null,
+      physics: scrollRequired
+          ? const AlwaysScrollableScrollPhysics()
+          : const NeverScrollableScrollPhysics(),
+      itemCount: rowCount,
+      itemBuilder: (context, index) {
+        final item = index < plans.length ? plans[index] : null;
+        return SizedBox(
+          height: 28,
+          child: Row(
+            children: [
+              Expanded(child: _PartCountCell('${index + 1}')),
+              Expanded(
+                flex: 4,
+                child: _PartCountCell(item?.partNumber ?? ''),
+              ),
+              Expanded(
+                flex: 2,
+                child: _PartCountCell(item?.planCount.toString() ?? ''),
+              ),
+              Expanded(
+                flex: 3,
+                child: _PartCountCell(item?.status ?? ''),
+              ),
+              Expanded(
+                flex: 2,
+                child: _PartCountCell(item?.releaseCount.toString() ?? ''),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!scrollRequired) return list;
+
+    return Scrollbar(
+      controller: _partPlanScrollController,
+      thumbVisibility: true,
+      trackVisibility: false,
+      thickness: 6,
+      radius: const Radius.circular(3),
+      child: list,
+    );
+  }
+
+  Widget _buildPartPlanTotal(double height) {
+    return SizedBox(
+      height: height,
+      child: Row(
+        children: [
+          const Expanded(
+            child: _PartCountCell('', backgroundColor: Colors.white),
+          ),
+          const Expanded(
+            flex: 4,
+            child: _PartCountCell('', backgroundColor: Colors.white),
+          ),
+          const Expanded(
+            flex: 2,
+            child: _PartCountCell('', backgroundColor: Colors.white),
+          ),
+          Expanded(
+            flex: 3,
+            child: _PartCountCell(
+              'Total',
+              alignment: Alignment.centerRight,
+              backgroundColor: Colors.white,
+              textColor: Colors.grey,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: _PartCountCell(
+              dailyReleaseTotal.toString(),
+              backgroundColor: Colors.white,
+            ),
+          ),
         ],
       ),
     );
@@ -1044,6 +1285,8 @@ class _BoxingScreenState extends State<BoxingScreen> {
       hourlyShiftCode = next.code;
       hourlyShiftLabel = _shiftLabel(next.code);
       hourlyCounts = [];
+      partPlans = [];
+      dailyReleaseTotal = 0;
     });
     unawaited(_refreshHourlyCounts());
   }
@@ -1558,6 +1801,49 @@ class _BoxingScreenState extends State<BoxingScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _PartCountCell extends StatelessWidget {
+  final String text;
+  final bool isHeader;
+  final Alignment alignment;
+  final Color? backgroundColor;
+  final Color? textColor;
+  final FontWeight? fontWeight;
+
+  const _PartCountCell(
+    this.text, {
+    this.isHeader = false,
+    this.alignment = Alignment.center,
+    this.backgroundColor,
+    this.textColor,
+    this.fontWeight,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      alignment: alignment,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: backgroundColor ?? (isHeader ? null : Colors.white),
+        border: Border.all(
+          color: isHeader ? Colors.white24 : Colors.grey.shade300,
+        ),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: textColor ?? (isHeader ? Colors.white : Colors.black87),
+          fontSize: 11,
+          fontWeight: fontWeight ??
+              (isHeader ? FontWeight.bold : FontWeight.normal),
+        ),
+      ),
     );
   }
 }
