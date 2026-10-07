@@ -126,7 +126,7 @@ class UpdateShareService {
       );
     }
 
-    if (await Directory(shareRoot).exists()) {
+    if (await _shareDirectoryExists()) {
       return const _ShareSession();
     }
 
@@ -148,7 +148,7 @@ class UpdateShareService {
     );
 
     final authenticated = result.exitCode == 0;
-    final shareExists = await Directory(shareRoot).exists();
+    final shareExists = await _shareDirectoryExists();
     if (!authenticated || !shareExists) {
       if (authenticated) {
         await _disconnectSession();
@@ -160,12 +160,28 @@ class UpdateShareService {
           'Cierre esa conexion e intente nuevamente.',
         );
       }
+      if (result.exitCode == 1326 || output.contains('1326')) {
+        throw const UpdateShareException(
+          'El usuario o la contrasena del recurso de actualizaciones no son correctos.',
+        );
+      }
       throw const UpdateShareException(
         'No se pudo autenticar el recurso de actualizaciones.',
       );
     }
 
     return const _ShareSession(authenticated: true);
+  }
+
+  static Future<bool> _shareDirectoryExists() async {
+    try {
+      return await Directory(shareRoot).exists();
+    } on FileSystemException {
+      // Windows can throw here when the UNC path is known but unauthenticated.
+      // Let the caller continue to the credentials flow instead of exposing
+      // the raw OS exception to the operator.
+      return false;
+    }
   }
 
   static String _fileName(String path) {
